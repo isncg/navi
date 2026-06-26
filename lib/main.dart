@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as dev;
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() {
   FlutterError.onError = (details) {
@@ -30,8 +33,38 @@ class _TrackPoint {
   final LatLng point;
   final DateTime time;
   final double totalDistance;
+  final int segment;
 
-  const _TrackPoint(this.point, this.time, this.totalDistance);
+  const _TrackPoint(this.point, this.time, this.totalDistance, {this.segment = 0});
+
+  Map<String, dynamic> toJson() => {
+        'lat': point.latitude,
+        'lng': point.longitude,
+        'time': time.toIso8601String(),
+        'dist': totalDistance,
+        'seg': segment,
+      };
+
+  factory _TrackPoint.fromJson(Map<String, dynamic> json) => _TrackPoint(
+        LatLng(json['lat'] as double, json['lng'] as double),
+        DateTime.parse(json['time'] as String),
+        (json['dist'] as num).toDouble(),
+        segment: json.containsKey('seg') ? (json['seg'] as int) : 0,
+      );
+}
+
+class _SavedRecording {
+  final String name;
+  final String path;
+  final int pointCount;
+  final double totalDistance;
+
+  const _SavedRecording({
+    required this.name,
+    required this.path,
+    required this.pointCount,
+    required this.totalDistance,
+  });
 }
 
 class MapPage extends StatefulWidget {
@@ -50,6 +83,7 @@ class _MapPageState extends State<MapPage> {
   bool _recording = false;
   final _track = <_TrackPoint>[];
   int _elapsedSeconds = 0;
+  int _currentSegment = 0;
   Timer? _timer;
   StreamSubscription<Position>? _posSub;
 
@@ -57,6 +91,10 @@ class _MapPageState extends State<MapPage> {
   final _surveyPoints = <LatLng>[];
   final _savedSurveys = <List<LatLng>>[];
   int _cameraVersion = 0;
+
+  final _savedRecordings = <_SavedRecording>[];
+  List<_TrackPoint>? _loadedTrack;
+  String? _loadedTrackName;
 
   final _distanceCalc = const Distance();
 
@@ -76,6 +114,7 @@ class _MapPageState extends State<MapPage> {
     super.initState();
     _log('App started');
     _locate();
+    _loadSavedRecordings();
   }
 
   @override
@@ -120,11 +159,7 @@ class _MapPageState extends State<MapPage> {
     try {
       _log('Requesting position...');
       final position = await Geolocator.getCurrentPosition(
-        locationSettings: AndroidSettings(
-          accuracy: LocationAccuracy.best,
-          timeLimit: const Duration(seconds: 15),
-          forceLocationManager: true,
-        ),
+        locationSettings: _locationSettings(),
       );
       _log('Position: ${position.latitude}, ${position.longitude} accuracy=${position.accuracy}m');
       if (!mounted) return;
@@ -154,28 +189,52 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
+  LocationSettings _locationSettings({int distanceFilter = 0}) {
+    if (Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.best,
+        distanceFilter: distanceFilter,
+        forceLocationManager: true,
+        timeLimit: const Duration(seconds: 15),
+      );
+    }
+    return LocationSettings(
+      accuracy: LocationAccuracy.best,
+      distanceFilter: distanceFilter,
+      timeLimit: const Duration(seconds: 15),
+    );
+  }
+
   void _startRecording() {
     _track.clear();
     _elapsedSeconds = 0;
+    _currentSegment = 0;
 
     final now = DateTime.now();
     _track.add(_TrackPoint(_center, now, 0));
 
     _posSub = Geolocator.getPositionStream(
-      locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: 2,
-        forceLocationManager: true,
-      ),
+      locationSettings: _locationSettings(distanceFilter: 2),
     ).listen((pos) {
       if (!mounted) return;
-      final p = LatLng(pos.latitude, pos.longitude);
-      final last = _track.last;
-      final d = _distanceCalc.as(LengthUnit.Meter, last.point, p);
-      final total = last.totalDistance + d;
-      setState(() {
-        _track.add(_TrackPoint(p, pos.timestamp, total));
-      });
+      try {
+        final p = LatLng(pos.latitude, pos.longitude);
+        final last = _track.last;
+        final d = _distanceCalc.as(LengthUnit.Meter, last.point, p);
+        final total = last.totalDistance + d;
+        final gap = pos.timestamp.difference(last.time);
+        if (gap.inSeconds > 10 || d > 1000) {
+          _currentSegment++;
+          _log('GPS gap detected, new segment $_currentSegment');
+        }
+        setState(() {
+          _track.add(_TrackPoint(p, pos.timestamp, total, segment: _currentSegment));
+        });
+      } catch (e) {
+        _log('Stream position error', error: e);
+      }
+    }, onError: (e) {
+      _log('Stream error', error: e);
     });
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -192,6 +251,104 @@ class _MapPageState extends State<MapPage> {
     _timer?.cancel();
     _timer = null;
     setState(() => _recording = false);
+    if (_track.length >= 2) _saveRecording();
+  }
+
+  Future<Directory> _trackDir() async {
+    Directory parent;
+    if (Platform.isAndroid) {
+      final ext = await getExternalStorageDirectory();
+      parent = ext ?? await getApplicationDocumentsDirectory();
+    } else {
+      parent = await getApplicationDocumentsDirectory();
+    }
+    final trackDir = Directory('${parent.path}/navi_tracks');
+    if (!await trackDir.exists()) await trackDir.create(recursive: true);
+    return trackDir;
+  }
+
+  Future<void> _saveRecording() async {
+    final now = DateTime.now();
+    final name = '${now.year}-${_pad(now.month)}-${_pad(now.day)}_'
+        '${_pad(now.hour)}-${_pad(now.minute)}-${_pad(now.second)}';
+    final data = {
+      'name': name,
+      'points': _track.map((t) => t.toJson()).toList(),
+    };
+    try {
+      final dir = await _trackDir();
+      final file = File('${dir.path}/$name.json');
+      await file.writeAsString(jsonEncode(data));
+      _log('Track saved: $name (${_track.length} pts)');
+      _loadSavedRecordings();
+    } catch (e) {
+      _log('Save failed', error: e);
+    }
+  }
+
+  String _pad(int n) => n.toString().padLeft(2, '0');
+
+  Future<void> _loadSavedRecordings() async {
+    try {
+      final dir = await _trackDir();
+      final files = await dir.list().toList();
+      final recordings = <_SavedRecording>[];
+      for (final f in files) {
+        if (f is File && f.path.endsWith('.json')) {
+          try {
+            final content = await f.readAsString();
+            final data = jsonDecode(content) as Map<String, dynamic>;
+            final points = (data['points'] as List).cast<Map<String, dynamic>>();
+            double totalDist = 0;
+            if (points.isNotEmpty) {
+              totalDist = (points.last['dist'] as num).toDouble();
+            }
+            recordings.add(_SavedRecording(
+              name: data['name'] as String? ?? f.path.split('/').last.replaceAll('.json', ''),
+              path: f.path,
+              pointCount: points.length,
+              totalDistance: totalDist,
+            ));
+          } catch (_) {}
+        }
+      }
+      recordings.sort((a, b) => b.name.compareTo(a.name));
+      if (mounted) setState(() => _savedRecordings.replaceRange(0, _savedRecordings.length, recordings));
+    } catch (_) {}
+  }
+
+  Future<void> _loadRecording(_SavedRecording rec) async {
+    try {
+      final content = await File(rec.path).readAsString();
+      final data = jsonDecode(content) as Map<String, dynamic>;
+      final points = (data['points'] as List)
+          .map((e) => _TrackPoint.fromJson(e as Map<String, dynamic>))
+          .toList();
+      if (mounted) {
+        setState(() {
+          _loadedTrack = points;
+          _loadedTrackName = rec.name;
+        });
+      }
+      _log('Loaded track: ${rec.name}');
+    } catch (e) {
+      _log('Load failed', error: e);
+    }
+  }
+
+  Future<void> _deleteRecording(_SavedRecording rec) async {
+    try {
+      await File(rec.path).delete();
+      _loadSavedRecordings();
+      if (_loadedTrackName == rec.name) {
+        setState(() {
+          _loadedTrack = null;
+          _loadedTrackName = null;
+        });
+      }
+    } catch (e) {
+      _log('Delete failed', error: e);
+    }
   }
 
   String _fmtDuration(int s) {
@@ -249,6 +406,11 @@ class _MapPageState extends State<MapPage> {
               if (_located) _buildLocationMarker(),
               if (_track.length >= 2) _buildTrackPolyline(),
               if (_track.length >= 2) MarkerLayer(markers: _buildTrackLabels()),
+              if (_loadedTrack != null && _loadedTrack!.length >= 2) ...[
+                _buildLoadedTrackPolyline(),
+                MarkerLayer(markers: _buildLoadedTrackLabels()),
+                if (_loadedTrack!.isNotEmpty) _buildLoadedTrackEndpoints(),
+              ],
               if (_surveyPoints.length >= 2) _buildSurveyLines(),
               if (_surveyPoints.length >= 2) MarkerLayer(markers: _buildSurveyLabels()),
               if (_surveyPoints.isNotEmpty) _buildSurveyPointsLayer(),
@@ -259,7 +421,8 @@ class _MapPageState extends State<MapPage> {
               ],
             ],
           ),
-          if (_recording) _buildTimerBar(),
+              if (_recording) _buildTimerBar(),
+          if (_loadedTrack != null) _buildLoadedTrackBar(),
           if (_surveyMode) _buildSurveyBar(),
           if (!_located) const Center(child: CircularProgressIndicator()),
           if (_showLogs) _buildLogPanel(),
@@ -319,15 +482,51 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  static const _segmentColors = [
+    Colors.cyanAccent,
+    Colors.yellowAccent,
+    Colors.orangeAccent,
+    Colors.greenAccent,
+    Colors.pinkAccent,
+  ];
+
+  static const _loadedSegmentColors = [
+    Colors.purpleAccent,
+    Colors.pink,
+    Colors.deepOrangeAccent,
+    Colors.tealAccent,
+  ];
+
+  List<Polyline> _buildSegmentPolylines(
+    List<_TrackPoint> points,
+    List<Color> colors,
+  ) {
+    if (points.isEmpty) return [];
+    final lines = <Polyline>[];
+    int start = 0;
+    int seg = points.first.segment;
+    for (int i = 1; i < points.length; i++) {
+      if (points[i].segment != seg) {
+        lines.add(Polyline(
+          points: points.sublist(start, i).map((t) => t.point).toList(),
+          color: colors[seg % colors.length],
+          strokeWidth: 3,
+        ));
+        start = i;
+        seg = points[i].segment;
+      }
+    }
+    lines.add(Polyline(
+      points: points.sublist(start).map((t) => t.point).toList(),
+      color: colors[seg % colors.length],
+      strokeWidth: 3,
+    ));
+    return lines;
+  }
+
   Widget _buildTrackPolyline() {
     return PolylineLayer(
-      polylines: [
-        Polyline(
-          points: _track.map((t) => t.point).toList(),
-          color: Colors.cyanAccent,
-          strokeWidth: 3,
-        ),
-      ],
+      polylines: _buildSegmentPolylines(_track, _segmentColors),
     );
   }
 
@@ -423,12 +622,221 @@ class _MapPageState extends State<MapPage> {
         ),
         const SizedBox(height: 12),
         FloatingActionButton.small(
+          heroTag: 'saved',
+          onPressed: _showSavedTracksDialog,
+          child: const Icon(Icons.folder_open),
+        ),
+        const SizedBox(height: 12),
+        FloatingActionButton.small(
           heroTag: 'logs',
           onPressed: () => setState(() => _showLogs = !_showLogs),
           backgroundColor: _showLogs ? Colors.green : null,
           child: const Icon(Icons.terminal),
         ),
       ],
+    );
+  }
+
+  Widget _buildLoadedTrackEndpoints() {
+    final pts = _loadedTrack!;
+    final start = pts.first;
+    final end = pts.last;
+    final total = pts.last.totalDistance;
+    return MarkerLayer(
+      markers: [
+        Marker(
+          point: start.point,
+          width: 120,
+          height: 44,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 18),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.green,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                width: 14,
+                height: 14,
+              ),
+              _strokeText('起点  ${_fmtDuration(0)}', fill: Colors.green, fontSize: 9),
+            ],
+          ),
+        ),
+        Marker(
+          point: end.point,
+          width: 120,
+          height: 44,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 18),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                width: 14,
+                height: 14,
+              ),
+              _strokeText('终点  ${_fmtDistance(total)}', fill: Colors.red, fontSize: 9),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoadedTrackBar() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.purple.shade900,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.folder_open, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _loadedTrackName ?? '',
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              GestureDetector(
+                onTap: () => setState(() {
+                  _loadedTrack = null;
+                  _loadedTrackName = null;
+                }),
+                child: const Icon(Icons.close, color: Colors.white54, size: 18),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadedTrackPolyline() {
+    return PolylineLayer(
+      polylines: _buildSegmentPolylines(_loadedTrack!, _loadedSegmentColors),
+    );
+  }
+
+  List<Marker> _buildLoadedTrackLabels() {
+    final pts = _loadedTrack!;
+    final labels = <Marker>[];
+    int prevIdx = 0;
+    for (int i = 0; i < pts.length; i++) {
+      final t = pts[i];
+      final d = pts[i].totalDistance - pts[prevIdx].totalDistance;
+      final td = t.time.difference(pts[prevIdx].time);
+      if (i > 0 && (d >= 100 || td.inSeconds >= 30 || i == pts.length - 1)) {
+        final elapsed = t.time.difference(pts.first.time);
+        final dur = _fmtDuration(elapsed.inSeconds);
+        final dist = _fmtDistance(t.totalDistance);
+        labels.add(Marker(
+          point: t.point,
+          width: 120,
+          height: 16,
+          child: _strokeText(
+            '$dur  $dist',
+            fill: Colors.purpleAccent,
+            fontSize: 10,
+          ),
+        ));
+        prevIdx = i;
+      }
+    }
+    return labels;
+  }
+
+  void _showSavedTracksDialog() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => Container(
+        constraints: const BoxConstraints(maxHeight: 400),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Text('保存的轨迹', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  Text('${_savedRecordings.length} 条'),
+                ],
+              ),
+            ),
+            if (_savedRecordings.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('暂无保存的轨迹', style: TextStyle(color: Colors.grey)),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  itemCount: _savedRecordings.length,
+                  itemBuilder: (_, i) {
+                    final rec = _savedRecordings[i];
+                    final isLoaded = _loadedTrackName == rec.name;
+                    return ListTile(
+                      leading: Icon(
+                        Icons.route,
+                        color: isLoaded ? Colors.purpleAccent : null,
+                      ),
+                      title: Text(rec.name, style: TextStyle(fontWeight: isLoaded ? FontWeight.bold : null)),
+                      subtitle: Text('${rec.pointCount} 点  ${_fmtDistance(rec.totalDistance)}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isLoaded)
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 20),
+                              onPressed: () {
+                                setState(() {
+                                  _loadedTrack = null;
+                                  _loadedTrackName = null;
+                                });
+                                Navigator.pop(context);
+                              },
+                            )
+                          else
+                            IconButton(
+                              icon: const Icon(Icons.download, size: 20),
+                              onPressed: () {
+                                _loadRecording(rec);
+                                Navigator.pop(context);
+                              },
+                            ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 20),
+                            onPressed: () {
+                              _deleteRecording(rec);
+                              Navigator.pop(context);
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
