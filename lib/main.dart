@@ -5,7 +5,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:latlong2/latlong.dart' hide Path;
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -51,6 +51,12 @@ class _SavedRecording {
   });
 }
 
+class _Measurement {
+  final LatLng from;
+  final LatLng to;
+  const _Measurement(this.from, this.to);
+}
+
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
 
@@ -71,9 +77,9 @@ class _MapPageState extends State<MapPage> {
   Timer? _timer;
   StreamSubscription<Position>? _posSub;
 
-  bool _surveyMode = false;
-  final _surveyPoints = <LatLng>[];
-  final _savedSurveys = <List<LatLng>>[];
+  bool _waypointMode = false;
+  final _waypoints = <LatLng>[];
+  final _savedWaypoints = <List<LatLng>>[];
   int _cameraVersion = 0;
 
   final _savedRecordings = <_SavedRecording>[];
@@ -86,6 +92,13 @@ class _MapPageState extends State<MapPage> {
   bool _showLogs = false;
   bool _cartographicMode = false;
   LatLng? _gridOrigin;
+
+  bool _measureMode = false;
+  bool _eraserMode = false;
+  final _measurements = <_Measurement>[];
+  LatLng? _dragFrom;
+  LatLng? _dragTo;
+  Offset? _dragLastScreen;
 
   void _log(String msg, {Object? error}) {
     final ts = DateTime.now().toIso8601String().substring(11, 23);
@@ -396,12 +409,18 @@ class _MapPageState extends State<MapPage> {
             options: MapOptions(
               initialCenter: _center,
               initialZoom: _located ? 18 : 16,
-              interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              interactionOptions: InteractionOptions(
+                flags: (_measureMode && !_eraserMode)
+                    ? InteractiveFlag.all & ~InteractiveFlag.drag & ~InteractiveFlag.pinchMove & ~InteractiveFlag.rotate
+                    : InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
-              onTap: _surveyMode
+              onTap: (_waypointMode || _eraserMode)
                   ? (tapPos, latlng) {
-                      setState(() => _surveyPoints.add(latlng));
+                      if (_eraserMode) {
+                        _eraseMeasurement(latlng);
+                        return;
+                      }
+                      setState(() => _waypoints.add(latlng));
                     }
                   : null,
               onMapEvent: (ev) {
@@ -440,22 +459,29 @@ class _MapPageState extends State<MapPage> {
                 MarkerLayer(markers: _buildLoadedTrackLabels()),
                 if (_loadedTrack!.isNotEmpty) _buildLoadedTrackEndpoints(),
               ],
-              if (_surveyPoints.length >= 2) _buildSurveyLines(),
-              if (_surveyPoints.length >= 2) MarkerLayer(markers: _buildSurveyLabels()),
-              if (_surveyPoints.isNotEmpty) _buildSurveyPointsLayer(),
-              for (int s = 0; s < _savedSurveys.length; s++) ...[
-                _buildSavedSurveyLines(s),
-                MarkerLayer(markers: _buildSavedSurveyLabels(s)),
-                _buildSavedSurveyPointsLayer(s),
+              if (_waypoints.length >= 2) _buildWaypointLines(),
+              if (_waypoints.length >= 2) MarkerLayer(markers: _buildWaypointLabels()),
+              if (_waypoints.isNotEmpty) _buildWaypointLayer(),
+              if (_measurements.isNotEmpty) _buildMeasurementPolyline(),
+              if (_measurements.isNotEmpty) MarkerLayer(markers: _buildMeasurementLabels()),
+              if (_dragFrom != null && _dragTo != null) ...[
+                _buildDragPolyline(),
+                MarkerLayer(markers: _buildDragLabels()),
+              ],
+              for (int s = 0; s < _savedWaypoints.length; s++) ...[
+                _buildSavedWaypointLines(s),
+                MarkerLayer(markers: _buildSavedWaypointLabels(s)),
+                _buildSavedWaypointLayer(s),
               ],
             ],
           ),
               if (_recording) _buildTimerBar(),
           if (_loadedTrack != null) _buildLoadedTrackBar(),
-          if (_surveyMode) _buildSurveyBar(),
+          if (_waypointMode) _buildWaypointBar(),
           if (_cartographicMode) _buildZoomLabel(),
           if (!_located) const Center(child: CircularProgressIndicator()),
           if (_showLogs) _buildLogPanel(),
+          if (_measureMode && !_eraserMode) _buildDragCapture(),
         ],
       ),
       floatingActionButton: _buildFabs(),
@@ -641,14 +667,14 @@ class _MapPageState extends State<MapPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (_savedSurveys.isNotEmpty)
+        if (_savedWaypoints.isNotEmpty)
           FloatingActionButton.small(
             heroTag: 'clearSaved',
-            onPressed: () => setState(() => _savedSurveys.clear()),
+            onPressed: () => setState(() => _savedWaypoints.clear()),
             backgroundColor: Colors.red.shade800,
             child: const Icon(Icons.layers_clear),
           ),
-        if (_savedSurveys.isNotEmpty) const SizedBox(height: 12),
+        if (_savedWaypoints.isNotEmpty) const SizedBox(height: 12),
         FloatingActionButton(
           heroTag: 'record',
           onPressed: _toggleRecording,
@@ -665,16 +691,36 @@ class _MapPageState extends State<MapPage> {
         ),
         const SizedBox(height: 12),
         FloatingActionButton(
-          heroTag: 'survey',
+          heroTag: 'waypoint',
           onPressed: () {
             setState(() {
-              _surveyMode = !_surveyMode;
-              if (!_surveyMode) _surveyPoints.clear();
+              _waypointMode = !_waypointMode;
+              if (!_waypointMode) _waypoints.clear();
             });
           },
-          backgroundColor: _surveyMode ? Colors.orange : null,
+          backgroundColor: _waypointMode ? Colors.orange : null,
           child: const Icon(Icons.straighten),
         ),
+        const SizedBox(height: 12),
+        FloatingActionButton.small(
+          heroTag: 'measure',
+          onPressed: () => setState(() {
+            _measureMode = !_measureMode;
+            _eraserMode = false;
+            _dragFrom = null;
+          }),
+          backgroundColor: _measureMode ? Colors.yellow.shade700 : null,
+          child: const Icon(Icons.arrow_right_alt),
+        ),
+        if (_measureMode) ...[
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'eraser',
+            onPressed: () => setState(() => _eraserMode = !_eraserMode),
+            backgroundColor: _eraserMode ? Colors.red : null,
+            child: const Icon(Icons.auto_fix_high),
+          ),
+        ],
         const SizedBox(height: 12),
         FloatingActionButton.small(
           heroTag: 'saved',
@@ -1018,8 +1064,176 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
-  Widget _buildSurveyBar() {
-    final totalDist = _surveyTotalDistance();
+  Widget _buildDragCapture() {
+    return Positioned.fill(
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (e) {
+          setState(() {
+            _dragFrom = _screenLatLng(e.localPosition);
+            _dragTo = _dragFrom;
+            _dragLastScreen = e.localPosition;
+          });
+        },
+        onPointerMove: (e) {
+          if (_dragFrom != null) {
+            setState(() {
+              _dragLastScreen = e.localPosition;
+              _dragTo = _screenLatLng(e.localPosition);
+            });
+          }
+        },
+        onPointerUp: (e) {
+          if (_dragFrom != null && _dragTo != null && _dragFrom != _dragTo) {
+            setState(() {
+              _measurements.add(_Measurement(_dragFrom!, _dragTo!));
+              _dragFrom = null;
+              _dragTo = null;
+              _dragLastScreen = null;
+            });
+          } else {
+            setState(() {
+              _dragFrom = null;
+              _dragTo = null;
+              _dragLastScreen = null;
+            });
+          }
+        },
+      ),
+    );
+  }
+
+  LatLng _screenLatLng(Offset screenPos) {
+    try {
+      final camera = _mapController.camera;
+      return camera.screenOffsetToLatLng(screenPos);
+    } catch (_) {
+      return _center;
+    }
+  }
+
+  void _eraseMeasurement(LatLng tap) {
+    double bestDist = double.infinity;
+    int bestIdx = -1;
+    for (int i = 0; i < _measurements.length; i++) {
+      final m = _measurements[i];
+      final dist = _distToSegment(tap, m.from, m.to);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    if (bestDist < 20 && bestIdx >= 0) {
+      setState(() => _measurements.removeAt(bestIdx));
+    }
+  }
+
+  double _distToSegment(LatLng p, LatLng a, LatLng b) {
+    final px = p.longitude;
+    final py = p.latitude;
+    final ax = a.longitude;
+    final ay = a.latitude;
+    final bx = b.longitude;
+    final by = b.latitude;
+    final abx = bx - ax;
+    final aby = by - ay;
+    final apx = px - ax;
+    final apy = py - ay;
+    final t = ((apx * abx + apy * aby) / (abx * abx + aby * aby)).clamp(0.0, 1.0);
+    final cx = ax + t * abx;
+    final cy = ay + t * aby;
+    final dx = px - cx;
+    final dy = py - cy;
+    final distDeg = math.sqrt(dx * dx + dy * dy);
+    return distDeg * 111320.0;
+  }
+
+  Widget _buildDragPolyline() {
+    return PolylineLayer(polylines: _arrowPolylines(_dragFrom!, _dragTo!, Colors.yellow));
+  }
+
+  List<Marker> _buildDragLabels() {
+    return _arrowLabel(_dragFrom!, _dragTo!, Colors.yellow);
+  }
+
+  Widget _buildMeasurementPolyline() {
+    final lines = <Polyline>[];
+    for (final m in _measurements) {
+      lines.addAll(_arrowPolylines(m.from, m.to, Colors.yellowAccent));
+    }
+    return PolylineLayer(polylines: lines);
+  }
+
+  List<Marker> _buildMeasurementLabels() {
+    final markers = <Marker>[];
+    for (final m in _measurements) {
+      markers.addAll(_arrowLabel(m.from, m.to, Colors.yellowAccent));
+    }
+    return markers;
+  }
+
+  List<Polyline> _arrowPolylines(LatLng from, LatLng to, Color color) {
+    return [
+      Polyline(points: [from, to], color: color, strokeWidth: 2.5),
+    ];
+  }
+
+  List<Marker> _arrowLabel(LatLng from, LatLng to, Color color) {
+    final dist = _distanceCalc.as(LengthUnit.Meter, from, to);
+    final bearing = _distanceCalc.bearing(from, to);
+    final az = (bearing + 360) % 360;
+    final direction = _bearingToCardinal(az);
+    final angleRad = bearing * math.pi / 180;
+    final cosLat = math.cos(to.latitude * math.pi / 180);
+    final backM = 32.0;
+    final perpM = 16.0;
+
+    var textRot = angleRad - math.pi / 2;
+    if (az > 180) {
+      textRot += math.pi;
+    }
+    final backLng = -math.sin(angleRad) * backM / (111320.0 * cosLat);
+    final backLat = -math.cos(angleRad) * backM / 111320.0;
+    var perpLng = math.cos(angleRad) * perpM / (111320.0 * cosLat);
+    var perpLat = -math.sin(angleRad) * perpM / 111320.0;
+    if (perpLat < 0) {
+      perpLng = -perpLng;
+      perpLat = -perpLat;
+    }
+    final labelLng = to.longitude + backLng + perpLng;
+    final labelLat = to.latitude + backLat + perpLat;
+
+    return [
+      Marker(
+        point: to,
+        width: 18,
+        height: 14,
+        child: Transform.rotate(
+          angle: angleRad,
+          child: CustomPaint(
+            size: const Size(18, 14),
+            painter: _ArrowHeadPainter(color),
+          ),
+        ),
+      ),
+      Marker(
+        point: LatLng(labelLat, labelLng),
+        width: 120,
+        height: 16,
+        child: Transform.rotate(
+          angle: textRot,
+          child: _strokeText(
+            '${_fmtDistance(dist)}  ${az.toStringAsFixed(1)}°$direction',
+            fill: color,
+            fontSize: 10,
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildWaypointBar() {
+    final totalDist = _waypointTotalDistance();
     return Positioned(
       top: 0,
       left: 0,
@@ -1037,7 +1251,7 @@ class _MapPageState extends State<MapPage> {
               const Icon(Icons.straighten, color: Colors.white, size: 18),
               const SizedBox(width: 8),
               Text(
-                '测  ${_surveyPoints.length}点',
+                '路  ${_waypoints.length}点',
                 style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
@@ -1047,24 +1261,24 @@ class _MapPageState extends State<MapPage> {
               ),
               const SizedBox(width: 10),
               GestureDetector(
-                onTap: _surveyPoints.length >= 2
+                onTap: _waypoints.length >= 2
                     ? () => setState(() {
-                          _savedSurveys.add(List.from(_surveyPoints));
-                          _surveyPoints.clear();
+                          _savedWaypoints.add(List.from(_waypoints));
+                          _waypoints.clear();
                         })
                     : null,
                 child: Icon(Icons.save,
-                    color: _surveyPoints.length >= 2 ? Colors.white : Colors.white30,
+                    color: _waypoints.length >= 2 ? Colors.white : Colors.white30,
                     size: 20),
               ),
               const SizedBox(width: 6),
               GestureDetector(
-                onTap: () => setState(() => _surveyPoints.removeLast()),
+                onTap: () => setState(() => _waypoints.removeLast()),
                 child: const Icon(Icons.undo, color: Colors.white54, size: 18),
               ),
               const SizedBox(width: 8),
               GestureDetector(
-                onTap: () => setState(() => _surveyPoints.clear()),
+                onTap: () => setState(() => _waypoints.clear()),
                 child: const Icon(Icons.delete_outline, color: Colors.white54, size: 18),
               ),
             ],
@@ -1074,10 +1288,10 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
-  double _surveyTotalDistance() {
+  double _waypointTotalDistance() {
     double d = 0;
-    for (int i = 1; i < _surveyPoints.length; i++) {
-      d += _distanceCalc.as(LengthUnit.Meter, _surveyPoints[i - 1], _surveyPoints[i]);
+    for (int i = 1; i < _waypoints.length; i++) {
+      d += _distanceCalc.as(LengthUnit.Meter, _waypoints[i - 1], _waypoints[i]);
     }
     return d;
   }
@@ -1123,11 +1337,11 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  Widget _buildSurveyLines() {
+  Widget _buildWaypointLines() {
     final lines = <Polyline>[];
-    for (int i = 1; i < _surveyPoints.length; i++) {
+    for (int i = 1; i < _waypoints.length; i++) {
       lines.add(Polyline(
-        points: [_surveyPoints[i - 1], _surveyPoints[i]],
+        points: [_waypoints[i - 1], _waypoints[i]],
         color: i.isOdd ? Colors.orange : Colors.deepOrange,
         strokeWidth: 3,
         pattern: StrokePattern.dotted(),
@@ -1136,12 +1350,12 @@ class _MapPageState extends State<MapPage> {
     return PolylineLayer(polylines: lines);
   }
 
-  Widget _buildSurveyPointsLayer() {
+  Widget _buildWaypointLayer() {
     final markers = <Marker>[];
-    for (int i = 0; i < _surveyPoints.length; i++) {
-      final p = _surveyPoints[i];
-      final tooClose = (i > 0 && _screenDistance(_surveyPoints[i - 1], p) < 28) ||
-          (i < _surveyPoints.length - 1 && _screenDistance(p, _surveyPoints[i + 1]) < 28);
+    for (int i = 0; i < _waypoints.length; i++) {
+      final p = _waypoints[i];
+      final tooClose = (i > 0 && _screenDistance(_waypoints[i - 1], p) < 28) ||
+          (i < _waypoints.length - 1 && _screenDistance(p, _waypoints[i + 1]) < 28);
       if (tooClose) continue;
       final lat = _toDms(p.latitude, isLat: true);
       final lng = _toDms(p.longitude, isLat: false);
@@ -1179,11 +1393,11 @@ class _MapPageState extends State<MapPage> {
     return MarkerLayer(markers: markers);
   }
 
-  List<Marker> _buildSurveyLabels() {
+  List<Marker> _buildWaypointLabels() {
     final labels = <Marker>[];
-    for (int i = 1; i < _surveyPoints.length; i++) {
-      final p1 = _surveyPoints[i - 1];
-      final p2 = _surveyPoints[i];
+    for (int i = 1; i < _waypoints.length; i++) {
+      final p1 = _waypoints[i - 1];
+      final p2 = _waypoints[i];
 
       if (_screenDistance(p1, p2) < 60) continue;
 
@@ -1221,8 +1435,8 @@ class _MapPageState extends State<MapPage> {
     return '';
   }
 
-  Widget _buildSavedSurveyLines(int si) {
-    final pts = _savedSurveys[si];
+  Widget _buildSavedWaypointLines(int si) {
+    final pts = _savedWaypoints[si];
     final lines = <Polyline>[];
     for (int i = 1; i < pts.length; i++) {
       lines.add(Polyline(
@@ -1235,8 +1449,8 @@ class _MapPageState extends State<MapPage> {
     return PolylineLayer(polylines: lines);
   }
 
-  Widget _buildSavedSurveyPointsLayer(int si) {
-    final pts = _savedSurveys[si];
+  Widget _buildSavedWaypointLayer(int si) {
+    final pts = _savedWaypoints[si];
     final markers = <Marker>[];
     for (int i = 0; i < pts.length; i++) {
       final tooClose = (i > 0 && _screenDistance(pts[i - 1], pts[i]) < 28) ||
@@ -1277,8 +1491,8 @@ class _MapPageState extends State<MapPage> {
     return MarkerLayer(markers: markers);
   }
 
-  List<Marker> _buildSavedSurveyLabels(int si) {
-    final pts = _savedSurveys[si];
+  List<Marker> _buildSavedWaypointLabels(int si) {
+    final pts = _savedWaypoints[si];
     final labels = <Marker>[];
     for (int i = 1; i < pts.length; i++) {
       final p1 = pts[i - 1];
@@ -1339,4 +1553,27 @@ class _MapPageState extends State<MapPage> {
       ],
     );
   }
+}
+
+class _ArrowHeadPainter extends CustomPainter {
+  final Color color;
+  _ArrowHeadPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    final path = Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(0, size.height)
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(size.width, size.height);
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
