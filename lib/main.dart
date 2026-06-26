@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 import 'dart:math' as math;
@@ -36,21 +35,6 @@ class _TrackPoint {
   final int segment;
 
   const _TrackPoint(this.point, this.time, this.totalDistance, {this.segment = 0});
-
-  Map<String, dynamic> toJson() => {
-        'lat': point.latitude,
-        'lng': point.longitude,
-        'time': time.toIso8601String(),
-        'dist': totalDistance,
-        'seg': segment,
-      };
-
-  factory _TrackPoint.fromJson(Map<String, dynamic> json) => _TrackPoint(
-        LatLng(json['lat'] as double, json['lng'] as double),
-        DateTime.parse(json['time'] as String),
-        (json['dist'] as num).toDouble(),
-        segment: json.containsKey('seg') ? (json['seg'] as int) : 0,
-      );
 }
 
 class _SavedRecording {
@@ -271,14 +255,18 @@ class _MapPageState extends State<MapPage> {
     final now = DateTime.now();
     final name = '${now.year}-${_pad(now.month)}-${_pad(now.day)}_'
         '${_pad(now.hour)}-${_pad(now.minute)}-${_pad(now.second)}';
-    final data = {
-      'name': name,
-      'points': _track.map((t) => t.toJson()).toList(),
-    };
+    final buf = StringBuffer();
+    buf.writeln('#$name');
+    for (final t in _track) {
+      buf.writeln('${t.point.latitude.toStringAsFixed(6)} '
+          '${t.point.longitude.toStringAsFixed(6)} '
+          '${t.time.millisecondsSinceEpoch} '
+          '${t.segment}');
+    }
     try {
       final dir = await _trackDir();
-      final file = File('${dir.path}/$name.json');
-      await file.writeAsString(jsonEncode(data));
+      final file = File('${dir.path}/$name.track');
+      await file.writeAsString(buf.toString());
       _log('Track saved: $name (${_track.length} pts)');
       _loadSavedRecordings();
     } catch (e) {
@@ -294,19 +282,28 @@ class _MapPageState extends State<MapPage> {
       final files = await dir.list().toList();
       final recordings = <_SavedRecording>[];
       for (final f in files) {
-        if (f is File && f.path.endsWith('.json')) {
+        if (f is File && f.path.endsWith('.track')) {
           try {
-            final content = await f.readAsString();
-            final data = jsonDecode(content) as Map<String, dynamic>;
-            final points = (data['points'] as List).cast<Map<String, dynamic>>();
+            final lines = await f.readAsLines();
+            if (lines.isEmpty) continue;
+            final name = lines.first.startsWith('#')
+                ? lines.first.substring(1)
+                : f.path.split('/').last.replaceAll('.track', '');
             double totalDist = 0;
-            if (points.isNotEmpty) {
-              totalDist = (points.last['dist'] as num).toDouble();
+            LatLng? prev;
+            for (int i = 1; i < lines.length; i++) {
+              final parts = lines[i].split(' ');
+              if (parts.length < 2) continue;
+              final point = LatLng(double.parse(parts[0]), double.parse(parts[1]));
+              if (prev != null) {
+                totalDist += _distanceCalc.as(LengthUnit.Meter, prev, point);
+              }
+              prev = point;
             }
             recordings.add(_SavedRecording(
-              name: data['name'] as String? ?? f.path.split('/').last.replaceAll('.json', ''),
+              name: name,
               path: f.path,
-              pointCount: points.length,
+              pointCount: lines.length - 1,
               totalDistance: totalDist,
             ));
           } catch (_) {}
@@ -319,11 +316,23 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _loadRecording(_SavedRecording rec) async {
     try {
-      final content = await File(rec.path).readAsString();
-      final data = jsonDecode(content) as Map<String, dynamic>;
-      final points = (data['points'] as List)
-          .map((e) => _TrackPoint.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final lines = await File(rec.path).readAsLines();
+      if (lines.isEmpty) return;
+      final points = <_TrackPoint>[];
+      double cum = 0;
+      LatLng? prev;
+      for (int i = 1; i < lines.length; i++) {
+        final parts = lines[i].split(' ');
+        if (parts.length < 3) continue;
+        final point = LatLng(double.parse(parts[0]), double.parse(parts[1]));
+        final time = DateTime.fromMillisecondsSinceEpoch(int.parse(parts[2]));
+        final seg = parts.length > 3 ? int.parse(parts[3]) : 0;
+        if (prev != null) {
+          cum += _distanceCalc.as(LengthUnit.Meter, prev, point);
+        }
+        prev = point;
+        points.add(_TrackPoint(point, time, cum, segment: seg));
+      }
       if (mounted) {
         setState(() {
           _loadedTrack = points;
