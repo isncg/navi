@@ -84,6 +84,8 @@ class _MapPageState extends State<MapPage> {
 
   final _logs = <String>[];
   bool _showLogs = false;
+  bool _cartographicMode = false;
+  LatLng? _gridOrigin;
 
   void _log(String msg, {Object? error}) {
     final ts = DateTime.now().toIso8601String().substring(11, 23);
@@ -411,10 +413,25 @@ class _MapPageState extends State<MapPage> {
               },
             ),
             children: [
-              TileLayer(
-                urlTemplate:
-                    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-              ),
+              if (_cartographicMode)
+                ColorFiltered(
+                  colorFilter: const ColorFilter.matrix(<double>[
+                    0.10, 0.33, 0.03, 0, 35,
+                    0.12, 0.37, 0.04, 0, 42,
+                    0.15, 0.45, 0.05, 0, 60,
+                    0,    0,    0,    1, 0,
+                  ]),
+                  child: TileLayer(
+                    urlTemplate:
+                        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                  ),
+                )
+              else
+                TileLayer(
+                  urlTemplate:
+                      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                ),
+              if (_cartographicMode) _buildGridLayer(),
               if (_located) _buildLocationMarker(),
               if (_track.length >= 2) _buildTrackPolyline(),
               if (_track.length >= 2) MarkerLayer(markers: _buildTrackLabels()),
@@ -436,11 +453,37 @@ class _MapPageState extends State<MapPage> {
               if (_recording) _buildTimerBar(),
           if (_loadedTrack != null) _buildLoadedTrackBar(),
           if (_surveyMode) _buildSurveyBar(),
+          if (_cartographicMode) _buildZoomLabel(),
           if (!_located) const Center(child: CircularProgressIndicator()),
           if (_showLogs) _buildLogPanel(),
         ],
       ),
       floatingActionButton: _buildFabs(),
+    );
+  }
+
+  Widget _buildZoomLabel() {
+    return Positioned(
+      top: 0,
+      right: 0,
+      child: SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black54,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            'Z${_mapController.camera.zoom.toStringAsFixed(1)}',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -640,6 +683,18 @@ class _MapPageState extends State<MapPage> {
         ),
         const SizedBox(height: 12),
         FloatingActionButton.small(
+          heroTag: 'cartographic',
+          onPressed: () => setState(() {
+            _cartographicMode = !_cartographicMode;
+            if (_cartographicMode && _gridOrigin == null && _located) {
+              _gridOrigin = _center;
+            }
+          }),
+          backgroundColor: _cartographicMode ? Colors.blueGrey : null,
+          child: const Icon(Icons.layers),
+        ),
+        const SizedBox(height: 12),
+        FloatingActionButton.small(
           heroTag: 'logs',
           onPressed: () => setState(() => _showLogs = !_showLogs),
           backgroundColor: _showLogs ? Colors.green : null,
@@ -700,6 +755,61 @@ class _MapPageState extends State<MapPage> {
         ),
       ],
     );
+  }
+
+  double _gridSpacingM() {
+    final z = _mapController.camera.zoom;
+    if (z >= 20) return 1;
+    if (z >= 17) return 10;
+    if (z >= 13) return 100;
+    if (z >= 10) return 1000;
+    if (z >= 6) return 10000;
+    return 100000;
+  }
+
+  PolylineLayer _buildGridLayer() {
+    final camera = _mapController.camera;
+    if (camera.zoom < 8) return PolylineLayer(polylines: []);
+    final bounds = camera.visibleBounds;
+    final spacingM = _gridSpacingM();
+    final origin = _gridOrigin;
+    final oLat = origin?.latitude ?? 0.0;
+    final oLng = origin?.longitude ?? 0.0;
+    final latDeg = spacingM / 111320.0;
+    final refLat = (camera.center.latitude / latDeg).round() * latDeg;
+    final lngDeg = spacingM / (111320.0 * math.cos(refLat * math.pi / 180));
+
+    final lines = <Polyline>[];
+
+    double lat = oLat;
+    while (lat >= bounds.south) lat -= latDeg;
+    lat += latDeg;
+    while (lat <= bounds.north) {
+      final distM = ((lat - oLat) * 111320.0).round().abs();
+      final major = distM % (spacingM * 10).round() == 0;
+      lines.add(Polyline(
+        points: [LatLng(lat, bounds.west), LatLng(lat, bounds.east)],
+        color: Colors.white30,
+        strokeWidth: major ? 2.5 : 1.0,
+      ));
+      lat += latDeg;
+    }
+
+    double lng = oLng;
+    while (lng >= bounds.west) lng -= lngDeg;
+    lng += lngDeg;
+    while (lng <= bounds.east) {
+      final distM = ((lng - oLng) * 111320.0 * math.cos(refLat * math.pi / 180)).round().abs();
+      final major = distM % (spacingM * 10).round() == 0;
+      lines.add(Polyline(
+        points: [LatLng(bounds.south, lng), LatLng(bounds.north, lng)],
+        color: Colors.white30,
+        strokeWidth: major ? 2.5 : 1.0,
+      ));
+      lng += lngDeg;
+    }
+
+    return PolylineLayer(polylines: lines);
   }
 
   Widget _buildLoadedTrackBar() {
