@@ -1125,7 +1125,7 @@ class _MapPageState extends State<MapPage> {
       ),
       Marker(
         point: LatLng(labelLat, labelLng),
-        width: 80,
+        width: 120,
         height: 16,
         child: Transform.rotate(
           angle: textRot,
@@ -1133,6 +1133,7 @@ class _MapPageState extends State<MapPage> {
             '${fmtDistance(dist)}  ${az.toStringAsFixed(1)}°$direction',
             fill: color,
             fontSize: 10,
+            minWidth: 120,
           ),
         ),
       ),
@@ -1201,34 +1202,6 @@ class _MapPageState extends State<MapPage> {
       d += _distanceCalc.as(LengthUnit.Meter, _waypoints[i - 1], _waypoints[i]);
     }
     return d;
-  }
-
-  Widget strokeText(String text, {Color fill = Colors.white, double fontSize = 11}) {
-    return Stack(
-      children: [
-        Text(
-          text,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.w600,
-            foreground: Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 3
-              ..color = Colors.black87,
-          ),
-        ),
-        Text(
-          text,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.w600,
-            color: fill,
-          ),
-        ),
-      ],
-    );
   }
 
   double _screenDistance(LatLng a, LatLng b) {

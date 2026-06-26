@@ -65,32 +65,70 @@ String bearingToCardinal(double degrees) {
   return '';
 }
 
-Widget strokeText(String text, {Color fill = Colors.white, double fontSize = 11}) {
-  return Stack(
-    children: [
-      Text(
-        text,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: fontSize,
-          fontWeight: FontWeight.w600,
-          foreground: Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 3
-            ..color = Colors.black87,
-        ),
-      ),
-      Text(
-        text,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: fontSize,
-          fontWeight: FontWeight.w600,
-          color: fill,
-        ),
-      ),
-    ],
+const _debugStrokeText = false;
+
+Widget strokeText(String text, {Color fill = Colors.white, double fontSize = 11, double minWidth = 0}) {
+  return Container(
+    decoration: _debugStrokeText
+        ? BoxDecoration(border: Border.all(color: Colors.red, width: 1))
+        : null,
+    child: _debugStrokeText
+        ? CustomPaint(
+            foregroundPainter: _CenterDotPainter(),
+            child: _buildTextStack(text, fill, fontSize, minWidth),
+          )
+        : _buildTextStack(text, fill, fontSize, minWidth),
   );
+}
+
+Widget _buildTextStack(String text, Color fill, double fontSize, double minWidth) {
+  return SizedBox(
+    width: minWidth > 0 ? minWidth : null,
+    child: Stack(
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight: FontWeight.w600,
+              foreground: Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 3
+                ..color = Colors.black87,
+            ),
+          ),
+        ),
+        SizedBox(
+          width: double.infinity,
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight: FontWeight.w600,
+              color: fill,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _CenterDotPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dot = Paint()..color = Colors.red;
+    canvas.drawCircle(Offset(size.width / 2, size.height / 2), 3, dot);
+    canvas.drawLine(Offset(size.width / 2 - 5, size.height / 2), Offset(size.width / 2 + 5, size.height / 2), dot);
+    canvas.drawLine(Offset(size.width / 2, size.height / 2 - 5), Offset(size.width / 2, size.height / 2 + 5), dot);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 const segmentColors = [
