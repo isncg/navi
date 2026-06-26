@@ -385,6 +385,9 @@ class _MapPageState extends State<MapPage> {
             options: MapOptions(
               initialCenter: _center,
               initialZoom: _located ? 18 : 16,
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
               onTap: _surveyMode
                   ? (tapPos, latlng) {
                       setState(() => _surveyPoints.add(latlng));
