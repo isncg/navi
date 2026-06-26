@@ -13,6 +13,7 @@ Flutter app for satellite map display and device location.
 
 ## Architecture
 - `lib/main.dart` — single-file app entrypoint, all features inline
+- `lib/common.dart` — shared types (`TrackPoint`, `SavedRecording`, `Measurement`), formatters (`fmtDuration`, `fmtDistance`, `toDms`, `bearingToCardinal`), `strokeText`, `ArrowHeadPainter`, segment helpers
 
 ## Features
 - Satellite tile map (ArcGIS World Imagery)
