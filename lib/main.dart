@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geolocator_android/geolocator_android.dart';
 
 void main() {
   FlutterError.onError = (details) {
@@ -120,9 +121,10 @@ class _MapPageState extends State<MapPage> {
     try {
       _log('Requesting position...');
       final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
+        locationSettings: AndroidSettings(
           accuracy: LocationAccuracy.best,
-          timeLimit: Duration(seconds: 10),
+          timeLimit: const Duration(seconds: 15),
+          forceLocationManager: true,
         ),
       );
       _log('Position: ${position.latitude}, ${position.longitude} accuracy=${position.accuracy}m');
@@ -132,8 +134,8 @@ class _MapPageState extends State<MapPage> {
         _located = true;
       });
       _moveToCurrent();
-    } catch (e) {
-      _log('Position error', error: e);
+    } catch (e, st) {
+      _log('Position error', error: '$e\n$st');
       if (!mounted) return;
       setState(() => _failed = true);
     }
@@ -161,9 +163,10 @@ class _MapPageState extends State<MapPage> {
     _track.add(_TrackPoint(_center, now, 0));
 
     _posSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
+      locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.best,
         distanceFilter: 2,
+        forceLocationManager: true,
       ),
     ).listen((pos) {
       if (!mounted) return;
@@ -364,10 +367,22 @@ class _MapPageState extends State<MapPage> {
 
   Widget _buildFabs() {
     if (!_located) {
-      return FloatingActionButton.extended(
-        onPressed: _failed ? _locate : null,
-        icon: Icon(_failed ? Icons.refresh : Icons.location_searching),
-        label: Text(_failed ? '重试' : '定位中...'),
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton.extended(
+            onPressed: _failed ? _locate : null,
+            icon: Icon(_failed ? Icons.refresh : Icons.location_searching),
+            label: Text(_failed ? '重试' : '定位中...'),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'logs',
+            onPressed: () => setState(() => _showLogs = !_showLogs),
+            backgroundColor: _showLogs ? Colors.green : null,
+            child: const Icon(Icons.terminal),
+          ),
+        ],
       );
     }
     return Column(
