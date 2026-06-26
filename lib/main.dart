@@ -172,7 +172,7 @@ class _MapPageState extends State<MapPage> {
       final d = _distanceCalc.as(LengthUnit.Meter, last.point, p);
       final total = last.totalDistance + d;
       setState(() {
-        _track.add(_TrackPoint(p, pos.timestamp ?? DateTime.now(), total));
+        _track.add(_TrackPoint(p, pos.timestamp, total));
       });
     });
 
@@ -213,7 +213,7 @@ class _MapPageState extends State<MapPage> {
     final degrees = d.truncate();
     final minutes = ((d - degrees) * 60).truncate();
     final seconds = ((d - degrees) * 60 - minutes) * 60;
-    return '${degrees}°${minutes.toString().padLeft(2, '0')}\'${seconds.toStringAsFixed(1).padLeft(4, '0')}"$dir';
+    return '$degrees°${minutes.toString().padLeft(2, '0')}\'${seconds.toStringAsFixed(1).padLeft(4, '0')}"$dir';
   }
 
   @override
@@ -658,7 +658,7 @@ class _MapPageState extends State<MapPage> {
         width: 120,
         height: 16,
         child: _strokeText(
-          '${_fmtDistance(dist)}  ${az.toStringAsFixed(1)}°${direction.isNotEmpty ? " ${direction}" : ""}',
+          '${_fmtDistance(dist)}  ${az.toStringAsFixed(1)}°${direction.isNotEmpty ? " $direction" : ""}',
         ),
       ));
     }
@@ -755,7 +755,7 @@ class _MapPageState extends State<MapPage> {
         width: 120,
         height: 16,
         child: _strokeText(
-          '${_fmtDistance(dist)}  ${az.toStringAsFixed(1)}°${direction.isNotEmpty ? " ${direction}" : ""}',
+          '${_fmtDistance(dist)}  ${az.toStringAsFixed(1)}°${direction.isNotEmpty ? " $direction" : ""}',
         ),
       ));
     }
