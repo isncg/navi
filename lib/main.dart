@@ -69,8 +69,8 @@ class _MapPageState extends State<MapPage> {
   bool _measureMode = false;
   bool _eraserMode = false;
   final _measurements = <Measurement>[];
-  LatLng? _dragFrom;
-  LatLng? _dragTo;
+  bool _measuring = false;
+  LatLng? _measureStart;
 
   void _log(String msg, {Object? error}) {
     final ts = DateTime.now().toIso8601String().substring(11, 23);
@@ -357,22 +357,17 @@ class _MapPageState extends State<MapPage> {
             options: MapOptions(
               initialCenter: _center,
               initialZoom: _located ? 18 : 16,
-              interactionOptions: InteractionOptions(
-                flags: (_measureMode && !_eraserMode)
-                    ? InteractiveFlag.all & ~InteractiveFlag.drag & ~InteractiveFlag.pinchMove & ~InteractiveFlag.rotate
-                    : InteractiveFlag.all & ~InteractiveFlag.rotate,
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
-              onTap: (_waypointMode || _eraserMode)
+              onTap: _eraserMode
                   ? (tapPos, latlng) {
-                      if (_eraserMode) {
-                        _eraseMeasurement(latlng);
-                        return;
-                      }
-                      setState(() => _waypoints.add(latlng));
+                      _eraseMeasurement(latlng);
                     }
                   : null,
               onMapEvent: (ev) {
-                if (ev is MapEventMoveEnd ||
+                if (ev is MapEventMove ||
+                    ev is MapEventMoveEnd ||
                     ev is MapEventFlingAnimationEnd ||
                     ev is MapEventScrollWheelZoom) {
                   setState(() => _cameraVersion++);
@@ -410,11 +405,12 @@ class _MapPageState extends State<MapPage> {
               if (_waypoints.length >= 2) _buildWaypointLines(),
               if (_waypoints.length >= 2) MarkerLayer(markers: _buildWaypointLabels()),
               if (_waypoints.isNotEmpty) _buildWaypointLayer(),
+              if (_waypointMode && _waypoints.isNotEmpty) _buildWaypointPreview(),
               if (_measurements.isNotEmpty) _buildMeasurementPolyline(),
               if (_measurements.isNotEmpty) MarkerLayer(markers: _buildMeasurementLabels()),
-              if (_dragFrom != null && _dragTo != null) ...[
-                _buildDragPolyline(),
-                MarkerLayer(markers: _buildDragLabels()),
+              if (_measuring && _measureStart != null && _measureStart != _mapController.camera.center) ...[
+                _buildDrawArrowPolyline(),
+                MarkerLayer(markers: _buildDrawArrowLabels()),
               ],
               for (int s = 0; s < _savedWaypoints.length; s++) ...[
                 _buildSavedWaypointLines(s),
@@ -429,7 +425,7 @@ class _MapPageState extends State<MapPage> {
           if (_cartographicMode) _buildZoomLabel(),
           if (!_located) const Center(child: CircularProgressIndicator()),
           if (_showLogs) _buildLogPanel(),
-          if (_measureMode && !_eraserMode) _buildDragCapture(),
+          if (_measureMode || _waypointMode) _buildCrosshair(),
         ],
       ),
       floatingActionButton: _buildFabs(),
@@ -573,52 +569,78 @@ class _MapPageState extends State<MapPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (_savedWaypoints.isNotEmpty)
+        if (_waypointMode) ...[
+          if (_savedWaypoints.isNotEmpty)
+            FloatingActionButton.small(
+              heroTag: 'clearSaved',
+              onPressed: () => setState(() => _savedWaypoints.clear()),
+              backgroundColor: Colors.red.shade800,
+              child: const Icon(Icons.layers_clear),
+            ),
+          if (_savedWaypoints.isNotEmpty)           const SizedBox(height: 12),
           FloatingActionButton.small(
-            heroTag: 'clearSaved',
-            onPressed: () => setState(() => _savedWaypoints.clear()),
-            backgroundColor: Colors.red.shade800,
-            child: const Icon(Icons.layers_clear),
+            heroTag: 'addWaypoint',
+            onPressed: () => setState(() {
+              _waypoints.add(_mapController.camera.center);
+            }),
+            backgroundColor: Colors.orange,
+            child: const Icon(Icons.add_location),
           ),
-        if (_savedWaypoints.isNotEmpty) const SizedBox(height: 12),
-        FloatingActionButton(
-          heroTag: 'record',
-          onPressed: _toggleRecording,
-          backgroundColor: _recording ? Colors.red : null,
-          child: Icon(_recording ? Icons.stop : Icons.fiber_manual_record),
-        ),
-        const SizedBox(height: 12),
-        FloatingActionButton(
-          heroTag: 'locate',
-          onPressed: () {
-            if (!_recording) _locate();
-          },
-          child: const Icon(Icons.my_location),
-        ),
-        const SizedBox(height: 12),
-        FloatingActionButton(
-          heroTag: 'waypoint',
-          onPressed: () {
-            setState(() {
-              _waypointMode = !_waypointMode;
-              if (!_waypointMode) _waypoints.clear();
-            });
-          },
-          backgroundColor: _waypointMode ? Colors.orange : null,
-          child: const Icon(Icons.straighten),
-        ),
-        const SizedBox(height: 12),
-        FloatingActionButton.small(
-          heroTag: 'measure',
-          onPressed: () => setState(() {
-            _measureMode = !_measureMode;
-            _eraserMode = false;
-            _dragFrom = null;
-          }),
-          backgroundColor: _measureMode ? Colors.yellow.shade700 : null,
-          child: const Icon(Icons.arrow_right_alt),
-        ),
-        if (_measureMode) ...[
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'undoWaypoint',
+            onPressed: () => setState(() => _waypoints.removeLast()),
+            child: const Icon(Icons.undo),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'clearWaypoints',
+            onPressed: () => setState(() => _waypoints.clear()),
+            child: const Icon(Icons.delete_outline),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'saveWaypoints',
+            onPressed: _waypoints.length >= 2
+                ? () => setState(() {
+                      _savedWaypoints.add(List.from(_waypoints));
+                      _waypoints.clear();
+                    })
+                : null,
+            backgroundColor: _waypoints.length >= 2 ? Colors.green : null,
+            child: const Icon(Icons.save),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'waypoint',
+            onPressed: () {
+              setState(() {
+                _waypointMode = !_waypointMode;
+                if (!_waypointMode) _waypoints.clear();
+              });
+            },
+            backgroundColor: _waypointMode ? Colors.grey.shade700 : null,
+            child: Icon(_waypointMode ? Icons.close : Icons.route),
+          ),
+        ] else if (_measureMode) ...[
+          FloatingActionButton.small(
+            heroTag: 'drawArrow',
+            onPressed: () => setState(() {
+              if (_measuring) {
+                final center = _mapController.camera.center;
+                if (_measureStart != center) {
+                  _measurements.add(Measurement(_measureStart!, center));
+                }
+                _measuring = false;
+                _measureStart = null;
+              } else {
+                _measuring = true;
+                _measureStart = _mapController.camera.center;
+              }
+            }),
+            backgroundColor: _measuring ? Colors.orange : null,
+            child: Icon(_measuring ? Icons.check : Icons.draw),
+          ),
           const SizedBox(height: 12),
           FloatingActionButton.small(
             heroTag: 'eraser',
@@ -626,13 +648,64 @@ class _MapPageState extends State<MapPage> {
             backgroundColor: _eraserMode ? Colors.red : null,
             child: const Icon(Icons.auto_fix_high),
           ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'measure',
+            onPressed: () => setState(() {
+              _measureMode = !_measureMode;
+              _eraserMode = false;
+              _measuring = false;
+              _measureStart = null;
+            }),
+            backgroundColor: _measureMode ? Colors.grey.shade700 : null,
+            child: Icon(_measureMode ? Icons.close : Icons.straighten),
+          ),
+        ] else ...[
+          FloatingActionButton.small(
+            heroTag: 'record',
+            onPressed: _toggleRecording,
+            backgroundColor: _recording ? Colors.red : null,
+            child: Icon(_recording ? Icons.stop : Icons.fiber_manual_record),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'locate',
+            onPressed: () {
+              if (!_recording) _locate();
+            },
+            child: const Icon(Icons.my_location),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'waypoint',
+            onPressed: () {
+              setState(() {
+                _waypointMode = !_waypointMode;
+                if (!_waypointMode) _waypoints.clear();
+              });
+            },
+            backgroundColor: _waypointMode ? Colors.grey.shade700 : null,
+            child: Icon(_waypointMode ? Icons.close : Icons.route),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'measure',
+            onPressed: () => setState(() {
+              _measureMode = !_measureMode;
+              _eraserMode = false;
+              _measuring = false;
+              _measureStart = null;
+            }),
+            backgroundColor: _measureMode ? Colors.yellow.shade700 : null,
+            child: const Icon(Icons.straighten),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'saved',
+            onPressed: _showSavedTracksDialog,
+            child: const Icon(Icons.folder_open),
+          ),
         ],
-        const SizedBox(height: 12),
-        FloatingActionButton.small(
-          heroTag: 'saved',
-          onPressed: _showSavedTracksDialog,
-          child: const Icon(Icons.folder_open),
-        ),
         const SizedBox(height: 12),
         FloatingActionButton.small(
           heroTag: 'cartographic',
@@ -974,48 +1047,15 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
-  Widget _buildDragCapture() {
-    return Positioned.fill(
-      child: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (e) {
-          setState(() {
-            _dragFrom = _screenLatLng(e.localPosition);
-            _dragTo = _dragFrom;
-          });
-        },
-        onPointerMove: (e) {
-          if (_dragFrom != null) {
-            setState(() {
-              _dragTo = _screenLatLng(e.localPosition);
-            });
-          }
-        },
-        onPointerUp: (e) {
-          if (_dragFrom != null && _dragTo != null && _dragFrom != _dragTo) {
-            setState(() {
-              _measurements.add(Measurement(_dragFrom!, _dragTo!));
-              _dragFrom = null;
-              _dragTo = null;
-            });
-          } else {
-            setState(() {
-              _dragFrom = null;
-              _dragTo = null;
-            });
-          }
-        },
+  Widget _buildCrosshair() {
+    return IgnorePointer(
+      child: Center(
+        child: CustomPaint(
+          size: const Size(40, 40),
+          painter: _CrosshairPainter(color: _measuring ? Colors.yellow : Colors.white),
+        ),
       ),
     );
-  }
-
-  LatLng _screenLatLng(Offset screenPos) {
-    try {
-      final camera = _mapController.camera;
-      return camera.screenOffsetToLatLng(screenPos);
-    } catch (_) {
-      return _center;
-    }
   }
 
   void _eraseMeasurement(LatLng tap) {
@@ -1029,7 +1069,8 @@ class _MapPageState extends State<MapPage> {
         bestIdx = i;
       }
     }
-    if (bestDist < 20 && bestIdx >= 0) {
+    final mPerPixel = 156543.0 * math.cos(tap.latitude * math.pi / 180) / math.pow(2.0, _mapController.camera.zoom);
+    if (bestDist < 30 * mPerPixel && bestIdx >= 0) {
       setState(() => _measurements.removeAt(bestIdx));
     }
   }
@@ -1054,12 +1095,14 @@ class _MapPageState extends State<MapPage> {
     return distDeg * 111320.0;
   }
 
-  Widget _buildDragPolyline() {
-    return PolylineLayer(polylines: _arrowPolylines(_dragFrom!, _dragTo!, Colors.yellow));
+  Widget _buildDrawArrowPolyline() {
+    final center = _mapController.camera.center;
+    return PolylineLayer(polylines: _arrowPolylines(_measureStart!, center, Colors.yellow));
   }
 
-  List<Marker> _buildDragLabels() {
-    return _arrowLabel(_dragFrom!, _dragTo!, Colors.yellow);
+  List<Marker> _buildDrawArrowLabels() {
+    final center = _mapController.camera.center;
+    return _arrowLabel(_measureStart!, center, Colors.yellow);
   }
 
   Widget _buildMeasurementPolyline() {
@@ -1143,53 +1186,21 @@ class _MapPageState extends State<MapPage> {
   Widget _buildWaypointBar() {
     final totalDist = _waypointTotalDistance();
     return Positioned(
-      top: 0,
+      bottom: 12,
       left: 0,
       right: 0,
-      child: SafeArea(
-        child: Container(
-          margin: const EdgeInsets.all(12),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: _recording ? Colors.black87 : Colors.orange.shade900,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.straighten, color: Colors.white, size: 18),
-              const SizedBox(width: 8),
-              Text(
-                '路  ${_waypoints.length}点',
-                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-              ),
-              const Spacer(),
-              Text(
-                fmtDistance(totalDist),
-                style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'monospace'),
-              ),
-              const SizedBox(width: 10),
-              GestureDetector(
-                onTap: _waypoints.length >= 2
-                    ? () => setState(() {
-                          _savedWaypoints.add(List.from(_waypoints));
-                          _waypoints.clear();
-                        })
-                    : null,
-                child: Icon(Icons.save,
-                    color: _waypoints.length >= 2 ? Colors.white : Colors.white30,
-                    size: 20),
-              ),
-              const SizedBox(width: 6),
-              GestureDetector(
-                onTap: () => setState(() => _waypoints.removeLast()),
-                child: const Icon(Icons.undo, color: Colors.white54, size: 18),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => setState(() => _waypoints.clear()),
-                child: const Icon(Icons.delete_outline, color: Colors.white54, size: 18),
-              ),
-            ],
+      child: IgnorePointer(
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '${_waypoints.length}点  ${fmtDistance(totalDist)}',
+              style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'monospace'),
+            ),
           ),
         ),
       ),
@@ -1228,6 +1239,21 @@ class _MapPageState extends State<MapPage> {
       ));
     }
     return PolylineLayer(polylines: lines);
+  }
+
+  Widget _buildWaypointPreview() {
+    final center = _mapController.camera.center;
+    final i = _waypoints.length;
+    return PolylineLayer(
+      polylines: [
+        Polyline(
+          points: [_waypoints.last, center],
+          color: i.isOdd ? Colors.orange : Colors.deepOrange,
+          strokeWidth: 3,
+          pattern: StrokePattern.dotted(),
+        ),
+      ],
+    );
   }
 
   Widget _buildWaypointLayer() {
@@ -1433,4 +1459,24 @@ class _MapPageState extends State<MapPage> {
       ],
     );
   }
+}
+
+class _CrosshairPainter extends CustomPainter {
+  final Color color;
+  _CrosshairPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()
+      ..color = color
+      ..strokeWidth = 1.5;
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    canvas.drawLine(Offset(cx, 4), Offset(cx, size.height - 4), p);
+    canvas.drawLine(Offset(4, cy), Offset(size.width - 4, cy), p);
+    canvas.drawCircle(Offset(cx, cy), 3, p..style = PaintingStyle.stroke);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
