@@ -32,11 +32,28 @@ class Measurement {
 }
 
 String fmtDuration(int s) {
+  if (s < 0) return '--:--';
+  if (s > 863999) return '${(s / 3600).toStringAsFixed(1)}h';
   final h = s ~/ 3600;
   final m = (s % 3600) ~/ 60;
   final sec = s % 60;
   if (h > 0) return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
   return '${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+}
+
+String fmtTime(DateTime t) {
+  final now = DateTime.now();
+  final s = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}';
+  if (t.year != now.year) {
+    return '${t.year}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')} $s';
+  }
+  if (t.month != now.month || t.day != now.day) {
+    if (t.month != now.month) {
+      return '${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')} $s';
+    }
+    return '${t.day.toString().padLeft(2, '0')}日 $s';
+  }
+  return s;
 }
 
 String fmtDistance(double m) {

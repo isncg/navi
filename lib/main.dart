@@ -42,6 +42,7 @@ class _MapPageState extends State<MapPage> {
   bool _located = false;
   bool _failed = false;
   final _mapController = MapController();
+  double _heading = 0;
 
   bool _recording = false;
   final _track = <TrackPoint>[];
@@ -49,6 +50,7 @@ class _MapPageState extends State<MapPage> {
   int _currentSegment = 0;
   Timer? _timer;
   StreamSubscription<Position>? _posSub;
+  StreamSubscription<Position>? _locSub;
 
   bool _waypointMode = false;
   final _waypoints = <LatLng>[];
@@ -72,6 +74,10 @@ class _MapPageState extends State<MapPage> {
   bool _measuring = false;
   LatLng? _measureStart;
 
+  bool _debugSim = false;
+  Timer? _simTimer;
+  LatLng? _simPos;
+
   void _log(String msg, {Object? error}) {
     final ts = DateTime.now().toIso8601String().substring(11, 23);
     final text = '[$ts] $msg${error != null ? ' $error' : ''}';
@@ -91,7 +97,9 @@ class _MapPageState extends State<MapPage> {
   @override
   void dispose() {
     _posSub?.cancel();
+    _locSub?.cancel();
     _timer?.cancel();
+    _simTimer?.cancel();
     super.dispose();
   }
 
@@ -139,6 +147,7 @@ class _MapPageState extends State<MapPage> {
         _located = true;
       });
       _moveToCurrent();
+      _startLocationUpdates();
     } catch (e, st) {
       _log('Position error', error: '$e\n$st');
       if (!mounted) return;
@@ -152,6 +161,61 @@ class _MapPageState extends State<MapPage> {
     });
   }
 
+  void _startLocationUpdates() {
+    _locSub?.cancel();
+    _locSub = Geolocator.getPositionStream(
+      locationSettings: _locationSettings(distanceFilter: 5, streaming: true),
+    ).listen((pos) {
+      if (!mounted || _recording) return;
+      setState(() {
+        _center = LatLng(pos.latitude, pos.longitude);
+        if (pos.heading >= 0) _heading = pos.heading;
+      });
+    });
+  }
+
+  void _stopLocationUpdates() {
+    _locSub?.cancel();
+    _locSub = null;
+  }
+
+  void _toggleDebugSim() {
+    setState(() {
+      _debugSim = !_debugSim;
+      if (!_debugSim) {
+        _simTimer?.cancel();
+        _simTimer = null;
+        _simPos = null;
+      } else {
+        _simPos = _center;
+        _startSimTimer();
+      }
+    });
+  }
+
+  void _startSimTimer() {
+    _simTimer?.cancel();
+    _simTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_debugSim) return;
+      final lat = _simPos!.latitude;
+      final lng = _simPos!.longitude + 5.0 / (111320.0 * math.cos(lat * math.pi / 180));
+      _simPos = LatLng(lat, lng);
+      if (_recording) {
+        final now = DateTime.now();
+        final last = _track.last;
+        final d = _distanceCalc.as(LengthUnit.Meter, last.point, _simPos!);
+        final total = last.totalDistance + d;
+        setState(() {
+          _track.add(TrackPoint(_simPos!, now, total, segment: _currentSegment));
+        });
+      }
+      setState(() {
+        _center = _simPos!;
+        if (!_recording) _located = true;
+      });
+    });
+  }
+
   void _toggleRecording() {
     if (_recording) {
       _stopRecording();
@@ -160,36 +224,45 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  LocationSettings _locationSettings({int distanceFilter = 0}) {
+  LocationSettings _locationSettings({int distanceFilter = 0, bool streaming = false}) {
     if (Platform.isAndroid) {
       return AndroidSettings(
         accuracy: LocationAccuracy.best,
         distanceFilter: distanceFilter,
         forceLocationManager: true,
-        timeLimit: const Duration(seconds: 15),
+        timeLimit: streaming ? null : const Duration(seconds: 15),
       );
     }
     return LocationSettings(
       accuracy: LocationAccuracy.best,
       distanceFilter: distanceFilter,
-      timeLimit: const Duration(seconds: 15),
+      timeLimit: streaming ? null : const Duration(seconds: 15),
     );
   }
 
   void _startRecording() {
+    _stopLocationUpdates();
     _track.clear();
     _elapsedSeconds = 0;
     _currentSegment = 0;
 
-    final now = DateTime.now();
-    _track.add(TrackPoint(_center, now, 0));
-
-    _posSub = Geolocator.getPositionStream(
-      locationSettings: _locationSettings(distanceFilter: 2),
+    if (_debugSim) {
+      final now = DateTime.now();
+      _track.add(TrackPoint(_center, now, 0));
+      _startSimTimer();
+    } else {
+      _posSub = Geolocator.getPositionStream(
+      locationSettings: _locationSettings(distanceFilter: 2, streaming: true),
     ).listen((pos) {
       if (!mounted) return;
       try {
         final p = LatLng(pos.latitude, pos.longitude);
+        if (_track.isEmpty) {
+          setState(() {
+            _track.add(TrackPoint(p, DateTime.now(), 0, segment: _currentSegment));
+          });
+          return;
+        }
         final last = _track.last;
         final d = _distanceCalc.as(LengthUnit.Meter, last.point, p);
         final total = last.totalDistance + d;
@@ -200,6 +273,7 @@ class _MapPageState extends State<MapPage> {
         }
         setState(() {
           _track.add(TrackPoint(p, pos.timestamp, total, segment: _currentSegment));
+          if (pos.heading >= 0) _heading = pos.heading;
         });
       } catch (e) {
         _log('Stream position error', error: e);
@@ -207,6 +281,7 @@ class _MapPageState extends State<MapPage> {
     }, onError: (e) {
       _log('Stream error', error: e);
     });
+    }
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -221,7 +296,9 @@ class _MapPageState extends State<MapPage> {
     _posSub = null;
     _timer?.cancel();
     _timer = null;
+    _simTimer?.cancel();
     setState(() => _recording = false);
+    _startLocationUpdates();
     if (_track.length >= 2) _saveRecording();
   }
 
@@ -509,46 +586,62 @@ class _MapPageState extends State<MapPage> {
 
   Widget _buildTrackPolyline() {
     return PolylineLayer(
-      polylines: buildSegmentPolylines(_track, segmentColors),
+      polylines: [
+        Polyline(
+          points: _track.map((t) => t.point).toList(),
+          color: Colors.yellowAccent,
+          strokeWidth: 3,
+        ),
+      ],
     );
   }
 
   List<Marker> _buildTrackLabels() {
     final labels = <Marker>[];
+    final zoom = _mapController.camera.zoom;
     int prevIdx = 0;
+    LatLng? prevLabelPoint;
     for (int i = 0; i < _track.length; i++) {
       final t = _track[i];
       final d = _track[i].totalDistance - _track[prevIdx].totalDistance;
       final td = t.time.difference(_track[prevIdx].time);
-      if (i > 0 && (d >= 100 || td.inSeconds >= 30 || i == _track.length - 1)) {
-        final elapsed = t.time.difference(_track.first.time);
-        final dur = fmtDuration(elapsed.inSeconds);
+      if (i == 0 || (d >= 100 || td.inSeconds >= 30 || i == _track.length - 1)) {
+        if (zoom < 12 && i != _track.length - 1) {
+          prevIdx = i;
+          continue;
+        }
+        if (prevLabelPoint != null && _screenDistance(prevLabelPoint, t.point) < 80 && i != _track.length - 1) {
+          prevIdx = i;
+          continue;
+        }
+        final dur = fmtTime(t.time);
         final dist = fmtDistance(t.totalDistance);
         labels.add(Marker(
           point: t.point,
-          width: 180,
-          height: 32,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            decoration: BoxDecoration(
-              color: Colors.cyanAccent.withValues(alpha: 0.85),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              '$dur  $dist',
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-            ),
+          width: 140,
+          height: 16,
+          child: strokeText(
+            '$dur  $dist',
+            fill: Colors.yellowAccent,
+            fontSize: 10,
           ),
         ));
         prevIdx = i;
+        prevLabelPoint = t.point;
       }
     }
     return labels;
   }
 
   Widget _buildFabs() {
+    Widget maybeWrap(Widget child) {
+      if (MediaQuery.of(context).orientation == Orientation.landscape) {
+        return SingleChildScrollView(child: child);
+      }
+      return child;
+    }
     if (!_located) {
-      return Column(
+      return maybeWrap(Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           FloatingActionButton.extended(
@@ -564,9 +657,9 @@ class _MapPageState extends State<MapPage> {
             child: const Icon(Icons.terminal),
           ),
         ],
-      );
+      ));
     }
-    return Column(
+    return maybeWrap(Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (_waypointMode) ...[
@@ -725,8 +818,17 @@ class _MapPageState extends State<MapPage> {
           backgroundColor: _showLogs ? Colors.green : null,
           child: const Icon(Icons.terminal),
         ),
+        if (_showLogs) ...[
+          const SizedBox(height: 12),
+          FloatingActionButton.small(
+            heroTag: 'debugSim',
+            onPressed: _toggleDebugSim,
+            backgroundColor: _debugSim ? Colors.purple : null,
+            child: Icon(_debugSim ? Icons.directions_walk : Icons.satellite_alt),
+          ),
+        ],
       ],
-    );
+    ));
   }
 
   Widget _buildLoadedTrackEndpoints() {
@@ -888,14 +990,23 @@ class _MapPageState extends State<MapPage> {
   List<Marker> _buildLoadedTrackLabels() {
     final pts = _loadedTrack!;
     final labels = <Marker>[];
+    final zoom = _mapController.camera.zoom;
     int prevIdx = 0;
+    LatLng? prevLabelPoint;
     for (int i = 0; i < pts.length; i++) {
       final t = pts[i];
       final d = pts[i].totalDistance - pts[prevIdx].totalDistance;
       final td = t.time.difference(pts[prevIdx].time);
-      if (i > 0 && (d >= 100 || td.inSeconds >= 30 || i == pts.length - 1)) {
-        final elapsed = t.time.difference(pts.first.time);
-        final dur = fmtDuration(elapsed.inSeconds);
+      if (i == 0 || (d >= 100 || td.inSeconds >= 30 || i == pts.length - 1)) {
+        if (zoom < 12 && i != pts.length - 1) {
+          prevIdx = i;
+          continue;
+        }
+        if (prevLabelPoint != null && _screenDistance(prevLabelPoint, t.point) < 80 && i != pts.length - 1) {
+          prevIdx = i;
+          continue;
+        }
+        final dur = fmtTime(t.time);
         final dist = fmtDistance(t.totalDistance);
         labels.add(Marker(
           point: t.point,
@@ -908,6 +1019,7 @@ class _MapPageState extends State<MapPage> {
           ),
         ));
         prevIdx = i;
+        prevLabelPoint = t.point;
       }
     }
     return labels;
@@ -1329,18 +1441,6 @@ class _MapPageState extends State<MapPage> {
     return labels;
   }
 
-  String bearingToCardinal(double degrees) {
-    if (degrees >= 337.5 || degrees < 22.5) return 'N';
-    if (degrees >= 22.5 && degrees < 67.5) return 'NE';
-    if (degrees >= 67.5 && degrees < 112.5) return 'E';
-    if (degrees >= 112.5 && degrees < 157.5) return 'SE';
-    if (degrees >= 157.5 && degrees < 202.5) return 'S';
-    if (degrees >= 202.5 && degrees < 247.5) return 'SW';
-    if (degrees >= 247.5 && degrees < 292.5) return 'W';
-    if (degrees >= 292.5 && degrees < 337.5) return 'NW';
-    return '';
-  }
-
   Widget _buildSavedWaypointLines(int si) {
     final pts = _savedWaypoints[si];
     final lines = <Polyline>[];
@@ -1440,16 +1540,29 @@ class _MapPageState extends State<MapPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 26),
-              Container(
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.blueAccent,
-                ),
-                width: 16,
-                height: 16,
-                child: const Center(
-                  child: Icon(Icons.circle, size: 8, color: Colors.white),
-                ),
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.blueAccent,
+                    ),
+                    width: 16,
+                    height: 16,
+                    child: const Center(
+                      child: Icon(Icons.circle, size: 8, color: Colors.white),
+                    ),
+                  ),
+                  if (_heading >= 0)
+                    Transform.rotate(
+                      angle: (_heading - 90) * math.pi / 180,
+                      child: CustomPaint(
+                        size: const Size(16, 10),
+                        painter: _HeadingTrianglePainter(),
+                      ),
+                    ),
+                ],
               ),
               strokeText(lat, fill: Colors.blueAccent, fontSize: 11),
               strokeText(lng, fill: Colors.blueAccent, fontSize: 11),
@@ -1459,6 +1572,21 @@ class _MapPageState extends State<MapPage> {
       ],
     );
   }
+}
+
+class _HeadingTrianglePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(0, size.height)
+      ..lineTo(size.width, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = Colors.blueAccent);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _CrosshairPainter extends CustomPainter {
