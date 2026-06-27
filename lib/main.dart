@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:geolocator/geolocator.dart';
@@ -503,6 +504,7 @@ class _MapPageState extends State<MapPage> {
           if (!_located) const Center(child: CircularProgressIndicator()),
           if (_showLogs) _buildLogPanel(),
           if (_measureMode || _waypointMode) _buildCrosshair(),
+          _buildLeftButtons(),
         ],
       ),
       floatingActionButton: _buildFabs(),
@@ -634,203 +636,220 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget _buildFabs() {
-    Widget maybeWrap(Widget child) {
-      if (MediaQuery.of(context).orientation == Orientation.landscape) {
-        return SingleChildScrollView(child: child);
-      }
-      return child;
-    }
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     if (!_located) {
-      return maybeWrap(Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.extended(
-            onPressed: _failed ? _locate : null,
-            icon: Icon(_failed ? Icons.refresh : Icons.location_searching),
-            label: Text(_failed ? '重试' : '定位中...'),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'logs',
-            onPressed: () => setState(() => _showLogs = !_showLogs),
-            backgroundColor: _showLogs ? Colors.green : null,
-            child: const Icon(Icons.terminal),
-          ),
-        ],
-      ));
-    }
-    return maybeWrap(Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (_waypointMode) ...[
-          if (_savedWaypoints.isNotEmpty)
-            FloatingActionButton.small(
-              heroTag: 'clearSaved',
-              onPressed: () => setState(() => _savedWaypoints.clear()),
-              backgroundColor: Colors.red.shade800,
-              child: const Icon(Icons.layers_clear),
-            ),
-          if (_savedWaypoints.isNotEmpty)           const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'addWaypoint',
-            onPressed: () => setState(() {
-              _waypoints.add(_mapController.camera.center);
-            }),
-            backgroundColor: Colors.orange,
-            child: const Icon(Icons.add_location),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'undoWaypoint',
-            onPressed: () => setState(() => _waypoints.removeLast()),
-            child: const Icon(Icons.undo),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'clearWaypoints',
-            onPressed: () => setState(() => _waypoints.clear()),
-            child: const Icon(Icons.delete_outline),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'saveWaypoints',
-            onPressed: _waypoints.length >= 2
-                ? () => setState(() {
-                      _savedWaypoints.add(List.from(_waypoints));
-                      _waypoints.clear();
-                    })
-                : null,
-            backgroundColor: _waypoints.length >= 2 ? Colors.green : null,
-            child: const Icon(Icons.save),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'waypoint',
-            onPressed: () {
-              setState(() {
-                _waypointMode = !_waypointMode;
-                if (!_waypointMode) _waypoints.clear();
-              });
-            },
-            backgroundColor: _waypointMode ? Colors.grey.shade700 : null,
-            child: Icon(_waypointMode ? Icons.close : Icons.route),
-          ),
-        ] else if (_measureMode) ...[
-          FloatingActionButton.small(
-            heroTag: 'drawArrow',
-            onPressed: () => setState(() {
-              if (_measuring) {
-                final center = _mapController.camera.center;
-                if (_measureStart != center) {
-                  _measurements.add(Measurement(_measureStart!, center));
-                }
-                _measuring = false;
-                _measureStart = null;
-              } else {
-                _measuring = true;
-                _measureStart = _mapController.camera.center;
-              }
-            }),
-            backgroundColor: _measuring ? Colors.orange : null,
-            child: Icon(_measuring ? Icons.check : Icons.draw),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'eraser',
-            onPressed: () => setState(() => _eraserMode = !_eraserMode),
-            backgroundColor: _eraserMode ? Colors.red : null,
-            child: const Icon(Icons.auto_fix_high),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'measure',
-            onPressed: () => setState(() {
-              _measureMode = !_measureMode;
-              _eraserMode = false;
-              _measuring = false;
-              _measureStart = null;
-            }),
-            backgroundColor: _measureMode ? Colors.grey.shade700 : null,
-            child: Icon(_measureMode ? Icons.close : Icons.straighten),
-          ),
-        ] else ...[
-          FloatingActionButton.small(
-            heroTag: 'record',
-            onPressed: _toggleRecording,
-            backgroundColor: _recording ? Colors.red : null,
-            child: Icon(_recording ? Icons.stop : Icons.fiber_manual_record),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'locate',
-            onPressed: () {
-              if (!_recording) _locate();
-            },
-            child: const Icon(Icons.my_location),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'waypoint',
-            onPressed: () {
-              setState(() {
-                _waypointMode = !_waypointMode;
-                if (!_waypointMode) _waypoints.clear();
-              });
-            },
-            backgroundColor: _waypointMode ? Colors.grey.shade700 : null,
-            child: Icon(_waypointMode ? Icons.close : Icons.route),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'measure',
-            onPressed: () => setState(() {
-              _measureMode = !_measureMode;
-              _eraserMode = false;
-              _measuring = false;
-              _measureStart = null;
-            }),
-            backgroundColor: _measureMode ? Colors.yellow.shade700 : null,
-            child: const Icon(Icons.straighten),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'saved',
-            onPressed: _showSavedTracksDialog,
-            child: const Icon(Icons.folder_open),
-          ),
-        ],
-        const SizedBox(height: 12),
-        FloatingActionButton.small(
-          heroTag: 'cartographic',
-          onPressed: () => setState(() {
-            _cartographicMode = !_cartographicMode;
-            if (_cartographicMode && _gridOrigin == null && _located) {
-              _gridOrigin = _center;
-            }
-          }),
-          backgroundColor: _cartographicMode ? Colors.blueGrey : null,
-          child: const Icon(Icons.layers),
+      final children = <Widget>[
+        FloatingActionButton.extended(
+          onPressed: _failed ? _locate : null,
+          icon: Icon(_failed ? Icons.refresh : Icons.location_searching),
+          label: Text(_failed ? '重试' : '定位中...'),
         ),
-        const SizedBox(height: 12),
         FloatingActionButton.small(
           heroTag: 'logs',
           onPressed: () => setState(() => _showLogs = !_showLogs),
           backgroundColor: _showLogs ? Colors.green : null,
           child: const Icon(Icons.terminal),
         ),
-        if (_showLogs) ...[
-          const SizedBox(height: 12),
-          FloatingActionButton.small(
-            heroTag: 'debugSim',
-            onPressed: _toggleDebugSim,
-            backgroundColor: _debugSim ? Colors.purple : null,
-            child: Icon(_debugSim ? Icons.directions_walk : Icons.satellite_alt),
-          ),
-        ],
-      ],
-    ));
+      ];
+      return isLandscape
+          ? SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(mainAxisSize: MainAxisSize.min, children: _addSpacing(children, isLandscape)),
+            )
+          : Column(mainAxisSize: MainAxisSize.min, children: _addSpacing(children, isLandscape));
+    }
+
+    final buttons = <Widget>[];
+    if (_waypointMode) {
+      if (_savedWaypoints.isNotEmpty) {
+        buttons.add(FloatingActionButton.small(
+          heroTag: 'clearSaved',
+          onPressed: () => setState(() => _savedWaypoints.clear()),
+          backgroundColor: Colors.red.shade800,
+          child: const Icon(Icons.layers_clear),
+        ));
+      }
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'addWaypoint',
+        onPressed: () => setState(() => _waypoints.add(_mapController.camera.center)),
+        backgroundColor: Colors.orange,
+        child: const Icon(Icons.add_location),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'undoWaypoint',
+        onPressed: () => setState(() => _waypoints.removeLast()),
+        child: const Icon(Icons.undo),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'clearWaypoints',
+        onPressed: () => setState(() => _waypoints.clear()),
+        child: const Icon(Icons.delete_outline),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'saveWaypoints',
+        onPressed: _waypoints.length >= 2
+            ? () => setState(() {
+                  _savedWaypoints.add(List.from(_waypoints));
+                  _waypoints.clear();
+                })
+            : null,
+        backgroundColor: _waypoints.length >= 2 ? Colors.green : null,
+        child: const Icon(Icons.save),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'waypoint',
+        onPressed: () {
+          setState(() {
+            _waypointMode = !_waypointMode;
+            if (!_waypointMode) _waypoints.clear();
+          });
+        },
+        backgroundColor: _waypointMode ? Colors.grey.shade700 : null,
+        child: Icon(_waypointMode ? Icons.close : Icons.route),
+      ));
+    } else if (_measureMode) {
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'drawArrow',
+        onPressed: () => setState(() {
+          if (_measuring) {
+            final center = _mapController.camera.center;
+            if (_measureStart != center) {
+              _measurements.add(Measurement(_measureStart!, center));
+            }
+            _measuring = false;
+            _measureStart = null;
+          } else {
+            _measuring = true;
+            _measureStart = _mapController.camera.center;
+          }
+        }),
+        backgroundColor: _measuring ? Colors.orange : null,
+        child: Icon(_measuring ? Icons.check : Icons.draw),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'eraser',
+        onPressed: () => setState(() => _eraserMode = !_eraserMode),
+        backgroundColor: _eraserMode ? Colors.red : null,
+        child: const Icon(Icons.auto_fix_high),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'measure',
+        onPressed: () => setState(() {
+          _measureMode = !_measureMode;
+          _eraserMode = false;
+          _measuring = false;
+          _measureStart = null;
+        }),
+        backgroundColor: _measureMode ? Colors.grey.shade700 : null,
+        child: Icon(_measureMode ? Icons.close : Icons.straighten),
+      ));
+    } else {
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'record',
+        onPressed: _toggleRecording,
+        backgroundColor: _recording ? Colors.red : null,
+        child: Icon(_recording ? Icons.stop : Icons.fiber_manual_record),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'locate',
+        onPressed: () { if (!_recording) _locate(); },
+        child: const Icon(Icons.my_location),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'waypoint',
+        onPressed: () {
+          setState(() {
+            _waypointMode = !_waypointMode;
+            if (!_waypointMode) _waypoints.clear();
+          });
+        },
+        backgroundColor: _waypointMode ? Colors.orange : null,
+        child: const Icon(Icons.route),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'measure',
+        onPressed: () => setState(() {
+          _measureMode = !_measureMode;
+          _eraserMode = false;
+          _measuring = false;
+          _measureStart = null;
+        }),
+        backgroundColor: _measureMode ? Colors.yellow.shade700 : null,
+        child: const Icon(Icons.straighten),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'saved',
+        onPressed: _showSavedTracksDialog,
+        child: const Icon(Icons.folder_open),
+      ));
+    }
+    final spaced = _addSpacing(buttons, isLandscape);
+    return isLandscape
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(mainAxisSize: MainAxisSize.min, children: spaced),
+          )
+        : Column(mainAxisSize: MainAxisSize.min, children: spaced);
   }
 
+  Widget _buildLeftButtons() {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final buttons = <Widget>[
+      FloatingActionButton.small(
+        heroTag: 'cartographic',
+        onPressed: () => setState(() {
+          _cartographicMode = !_cartographicMode;
+          if (_cartographicMode && _gridOrigin == null && _located) _gridOrigin = _center;
+        }),
+        backgroundColor: _cartographicMode ? Colors.blueGrey : null,
+        child: const Icon(Icons.layers),
+      ),
+      FloatingActionButton.small(
+        heroTag: 'orientation',
+        onPressed: () {
+          final land = MediaQuery.of(context).orientation == Orientation.landscape;
+          SystemChrome.setPreferredOrientations(land
+              ? [DeviceOrientation.portraitUp]
+              : [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+        },
+        child: const Icon(Icons.screen_rotation),
+      ),
+      FloatingActionButton.small(
+        heroTag: 'logs',
+        onPressed: () => setState(() => _showLogs = !_showLogs),
+        backgroundColor: _showLogs ? Colors.green : null,
+        child: const Icon(Icons.terminal),
+      ),
+      if (_showLogs) FloatingActionButton.small(
+        heroTag: 'debugSim',
+        onPressed: _toggleDebugSim,
+        backgroundColor: _debugSim ? Colors.purple : null,
+        child: Icon(_debugSim ? Icons.directions_walk : Icons.satellite_alt),
+      ),
+    ];
+    final spaced = _addSpacing(buttons, isLandscape);
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: isLandscape
+              ? Row(mainAxisSize: MainAxisSize.min, children: spaced)
+              : Column(mainAxisSize: MainAxisSize.min, children: spaced),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _addSpacing(List<Widget> items, bool horizontal) {
+    final result = <Widget>[];
+    for (int i = 0; i < items.length; i++) {
+      result.add(items[i]);
+      if (i < items.length - 1) result.add(horizontal ? const SizedBox(width: 12) : const SizedBox(height: 12));
+    }
+    return result;
+  }
   Widget _buildLoadedTrackEndpoints() {
     final pts = _loadedTrack!;
     final start = pts.first;
@@ -1105,7 +1124,7 @@ class _MapPageState extends State<MapPage> {
 
   Widget _buildLogPanel() {
     return Positioned(
-      bottom: 0,
+      top: 0,
       left: 0,
       right: 0,
       child: Container(
