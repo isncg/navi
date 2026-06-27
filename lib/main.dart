@@ -50,6 +50,8 @@ class _MapPageState extends State<MapPage> {
   int _elapsedSeconds = 0;
   int _currentSegment = 0;
   Timer? _timer;
+  Timer? _autoSaveTimer;
+  String? _autoSavePath;
   StreamSubscription<Position>? _posSub;
   StreamSubscription<Position>? _locSub;
 
@@ -84,7 +86,12 @@ class _MapPageState extends State<MapPage> {
     final text = '[$ts] $msg${error != null ? ' $error' : ''}';
     dev.log(msg, name: 'Navi', error: error);
     if (!mounted) return;
-    setState(() => _logs.add(text));
+    setState(() {
+      _logs.add(text);
+      while (_logs.length > 200) {
+        _logs.removeAt(0);
+      }
+    });
   }
 
   @override
@@ -93,6 +100,7 @@ class _MapPageState extends State<MapPage> {
     _log('App started');
     _locate();
     _loadSavedRecordings();
+    _checkAutoSaveRecovery();
   }
 
   @override
@@ -100,6 +108,7 @@ class _MapPageState extends State<MapPage> {
     _posSub?.cancel();
     _locSub?.cancel();
     _timer?.cancel();
+    _autoSaveTimer?.cancel();
     _simTimer?.cancel();
     super.dispose();
   }
@@ -289,6 +298,11 @@ class _MapPageState extends State<MapPage> {
       setState(() => _elapsedSeconds++);
     });
 
+    _autoSaveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted || !_recording || _track.length < 2) return;
+      _autoSaveNow();
+    });
+
     setState(() => _recording = true);
   }
 
@@ -297,10 +311,13 @@ class _MapPageState extends State<MapPage> {
     _posSub = null;
     _timer?.cancel();
     _timer = null;
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = null;
     _simTimer?.cancel();
     setState(() => _recording = false);
     _startLocationUpdates();
     if (_track.length >= 2) _saveRecording();
+    _deleteAutoSave();
   }
 
   Future<Directory> _trackDir() async {
@@ -336,6 +353,55 @@ class _MapPageState extends State<MapPage> {
       _loadSavedRecordings();
     } catch (e) {
       _log('Save failed', error: e);
+    }
+  }
+
+  Future<void> _autoSaveNow() async {
+    if (_track.length < 2) return;
+    final buf = StringBuffer();
+    buf.writeln('#autosave');
+    for (final t in _track) {
+      buf.writeln('${t.point.latitude.toStringAsFixed(6)} '
+          '${t.point.longitude.toStringAsFixed(6)} '
+          '${t.time.millisecondsSinceEpoch} '
+          '${t.segment}');
+    }
+    try {
+      final dir = await _trackDir();
+      final tmpFile = File('${dir.path}/.autosave.tmp');
+      await tmpFile.writeAsString(buf.toString());
+      _autoSavePath = tmpFile.path;
+    } catch (e) {
+      _log('Auto-save failed', error: e);
+    }
+  }
+
+  Future<void> _deleteAutoSave() async {
+    if (_autoSavePath == null) return;
+    try {
+      final f = File(_autoSavePath!);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+    _autoSavePath = null;
+  }
+
+  Future<void> _checkAutoSaveRecovery() async {
+    try {
+      final dir = await _trackDir();
+      final f = File('${dir.path}/.autosave.tmp');
+      if (!await f.exists()) return;
+      final lines = await f.readAsLines();
+      if (lines.length < 3) return;
+      final timestamp = DateTime.now();
+      final name2 = '${timestamp.year}-${_pad(timestamp.month)}-${_pad(timestamp.day)}_'
+          '${_pad(timestamp.hour)}-${_pad(timestamp.minute)}-${_pad(timestamp.second)}_recovered';
+      final dest = File('${dir.path}/$name2.track');
+      await f.copy(dest.path);
+      await f.delete();
+      _log('Recovered unsaved track: $name2 (${lines.length - 1} pts)');
+      _loadSavedRecordings();
+    } catch (e) {
+      _log('Recovery check failed', error: e);
     }
   }
 
@@ -464,12 +530,14 @@ class _MapPageState extends State<MapPage> {
                   child: TileLayer(
                     urlTemplate:
                         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                    evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
                   ),
                 )
               else
                 TileLayer(
                   urlTemplate:
                       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                  evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
                 ),
               if (_cartographicMode) _buildGridLayer(),
               if (_located) _buildLocationMarker(),
@@ -587,10 +655,11 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget _buildTrackPolyline() {
+    final simplified = _simplifyTrack(_track);
     return PolylineLayer(
       polylines: [
         Polyline(
-          points: _track.map((t) => t.point).toList(),
+          points: simplified.map((t) => t.point).toList(),
           color: Colors.yellowAccent,
           strokeWidth: 3,
         ),
@@ -598,21 +667,30 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  List<TrackPoint> _simplifyTrack(List<TrackPoint> pts) {
+    if (pts.length <= 500) return pts;
+    final step = pts.length ~/ 500;
+    final result = <TrackPoint>[pts.first];
+    for (int i = 1; i < pts.length - 1; i++) {
+      if (i % step == 0) result.add(pts[i]);
+    }
+    result.add(pts.last);
+    return result;
+  }
+
   List<Marker> _buildTrackLabels() {
     final labels = <Marker>[];
     final zoom = _mapController.camera.zoom;
+    if (zoom < 12) return labels;
+    final pts = _simplifyTrack(_track);
     int prevIdx = 0;
     LatLng? prevLabelPoint;
-    for (int i = 0; i < _track.length; i++) {
-      final t = _track[i];
-      final d = _track[i].totalDistance - _track[prevIdx].totalDistance;
-      final td = t.time.difference(_track[prevIdx].time);
-      if (i == 0 || (d >= 100 || td.inSeconds >= 30 || i == _track.length - 1)) {
-        if (zoom < 12 && i != _track.length - 1) {
-          prevIdx = i;
-          continue;
-        }
-        if (prevLabelPoint != null && _screenDistance(prevLabelPoint, t.point) < 80 && i != _track.length - 1) {
+    for (int i = 0; i < pts.length; i++) {
+      final t = pts[i];
+      final d = pts[i].totalDistance - pts[prevIdx].totalDistance;
+      final td = t.time.difference(pts[prevIdx].time);
+      if (i == 0 || (d >= 100 || td.inSeconds >= 30 || i == pts.length - 1)) {
+        if (prevLabelPoint != null && _screenDistance(prevLabelPoint, t.point) < 80 && i != pts.length - 1) {
           prevIdx = i;
           continue;
         }
