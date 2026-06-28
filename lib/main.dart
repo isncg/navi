@@ -51,6 +51,7 @@ class _MapPageState extends State<MapPage> {
   int _currentSegment = 0;
   Timer? _timer;
   Timer? _autoSaveTimer;
+  Timer? _safetyTimer;
   String? _autoSavePath;
   StreamSubscription<Position>? _posSub;
   StreamSubscription<Position>? _locSub;
@@ -102,7 +103,7 @@ class _MapPageState extends State<MapPage> {
     _locate();
     _loadSavedRecordings();
     _checkAutoSaveRecovery();
-    Timer(const Duration(seconds: 20), () {
+    _safetyTimer = Timer(const Duration(seconds: 20), () {
       if (mounted && !_located && !_failed) {
         _log('Location safety timeout: forcing failed');
         setState(() => _failed = true);
@@ -117,6 +118,7 @@ class _MapPageState extends State<MapPage> {
     _timer?.cancel();
     _autoSaveTimer?.cancel();
     _simTimer?.cancel();
+    _safetyTimer?.cancel();
     super.dispose();
   }
 
