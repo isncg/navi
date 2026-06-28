@@ -1702,37 +1702,57 @@ class _MapPageState extends State<MapPage> {
   Widget _buildLocationMarker() {
     final lat = toDms(_center.latitude, isLat: true);
     final lng = toDms(_center.longitude, isLat: false);
+    final hasHeading = _heading >= 0;
+    final headingRad = _heading * math.pi / 180;
+    const triDist = 12.0;
+    final triDx = triDist * math.sin(headingRad);
+    final triDy = -triDist * math.cos(headingRad);
 
     return MarkerLayer(
       markers: [
         Marker(
           point: _center,
+          width: 40,
+          height: 40,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Center(
+                child: Container(
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.blueAccent,
+                  ),
+                  width: 16,
+                  height: 16,
+                  child: const Center(
+                    child: Icon(Icons.circle, size: 8, color: Colors.white),
+                  ),
+                ),
+              ),
+              if (hasHeading)
+                Positioned(
+                  left: 20 + triDx - 6,
+                  top: 20 + triDy - 8,
+                  child: Transform.rotate(
+                    angle: headingRad,
+                    child: CustomPaint(
+                      size: const Size(12, 16),
+                      painter: _HeadingTrianglePainter(),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Marker(
+          point: _center,
           width: 220,
-          height: 82,
+          height: 28,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_heading >= 0)
-                Transform.rotate(
-                  angle: _heading * math.pi / 180,
-                  child: CustomPaint(
-                    size: const Size(12, 16),
-                    painter: _HeadingTrianglePainter(),
-                  ),
-                )
-              else
-                const SizedBox(height: 16),
-              Container(
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.blueAccent,
-                ),
-                width: 16,
-                height: 16,
-                child: const Center(
-                  child: Icon(Icons.circle, size: 8, color: Colors.white),
-                ),
-              ),
+              const SizedBox(height: 4),
               strokeText(lat, fill: Colors.blueAccent, fontSize: 11),
               strokeText(lng, fill: Colors.blueAccent, fontSize: 11),
             ],
