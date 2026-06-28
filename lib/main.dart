@@ -94,8 +94,13 @@ class _MapPageState extends State<MapPage> {
   int _downloadTotal = 0;
   bool _downloadCancel = false;
   Directory? _cacheDir;
+  int _tileSourceIndex = 0;
 
-  static const _tileSubdomains = ['1', '2', '3', '4'];
+  static const _tileSources = [
+    ('高德卫星', 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', ['1', '2', '3', '4']),
+    ('ArcGIS', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', <String>[]),
+    ('ESRI Clarity', 'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', <String>[]),
+  ];
 
   bool _debugSim = false;
   Timer? _simTimer;
@@ -435,8 +440,15 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _initCacheDir() async {
     final docDir = await getApplicationDocumentsDirectory();
-    _cacheDir = Directory('${docDir.path}/tile_cache');
+    _cacheDir = Directory('${docDir.path}/tiles_$_tileSourceIndex');
     if (!await _cacheDir!.exists()) await _cacheDir!.create(recursive: true);
+  }
+
+  Future<void> _switchTileSource(int index) async {
+    if (index == _tileSourceIndex) return;
+    _cancelDownload();
+    setState(() => _tileSourceIndex = index);
+    await _initCacheDir();
   }
 
   String _tilePath(int z, int x, int y) => '${_cacheDir!.path}/$z/$x/$y.png';
@@ -444,8 +456,12 @@ class _MapPageState extends State<MapPage> {
   Future<bool> _ensureTileCached(int z, int x, int y) async {
     final file = File(_tilePath(z, x, y));
     if (await file.exists()) return true;
-    final sub = _tileSubdomains[(x + y) % _tileSubdomains.length];
-    final url = 'https://webst0$sub.is.autonavi.com/appmaptile?style=6&x=$x&y=$y&z=$z';
+    final (_, urlTemplate, subdomains) = _tileSources[_tileSourceIndex];
+    final url = urlTemplate
+        .replaceAll('{z}', '$z')
+        .replaceAll('{x}', '$x')
+        .replaceAll('{y}', '$y')
+        .replaceAll('{s}', subdomains.isNotEmpty ? subdomains[(x + y) % subdomains.length] : '');
     try {
       final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
@@ -675,22 +691,10 @@ class _MapPageState extends State<MapPage> {
                     0.16, 0.48, 0.07, 0, 42,
                     0,    0,    0,    1, 0,
                   ]),
-                  child: TileLayer(
-                    urlTemplate:
-                        'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-                    subdomains: const ['1', '2', '3', '4'],
-                    tileProvider: CachedTileProvider(_cacheDir!),
-                    evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
-                  ),
+                  child: _buildTileLayer(),
                 )
               else
-                TileLayer(
-                  urlTemplate:
-                      'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-                  subdomains: const ['1', '2', '3', '4'],
-                  tileProvider: CachedTileProvider(_cacheDir!),
-                  evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
-                ),
+                _buildTileLayer(),
               if (_cartographicMode) _buildGridLayer(),
               if (_located && !_recording) _buildLocationMarker(),
               if (_track.length >= 2) _buildTrackPolyline(),
@@ -1178,6 +1182,11 @@ class _MapPageState extends State<MapPage> {
         backgroundColor: _showCoordinates ? Colors.blue : null,
         child: const Icon(Icons.pin_drop),
       ),
+      FloatingActionButton.small(
+        heroTag: 'tiles',
+        onPressed: _showTileSourceDialog,
+        child: const Icon(Icons.map),
+      ),
       if (_showLogs) FloatingActionButton.small(
         heroTag: 'debugSim',
         onPressed: _toggleDebugSim,
@@ -1316,6 +1325,16 @@ class _MapPageState extends State<MapPage> {
     }
 
     return PolylineLayer(polylines: lines    );
+  }
+
+  TileLayer _buildTileLayer() {
+    final (_, urlTemplate, subdomains) = _tileSources[_tileSourceIndex];
+    return TileLayer(
+      urlTemplate: urlTemplate,
+      subdomains: subdomains,
+      tileProvider: CachedTileProvider(_cacheDir!),
+      evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
+    );
   }
 
   Widget _buildDownloadProgress() {
@@ -1506,6 +1525,33 @@ class _MapPageState extends State<MapPage> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showTileSourceDialog() {
+    int selected = _tileSourceIndex;
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('地图源'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (int i = 0; i < _tileSources.length; i++)
+                ListTile(
+                  title: Text(_tileSources[i].$1),
+                  leading: Icon(selected == i ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                  onTap: () {
+                    setDialogState(() => selected = i);
+                    _switchTileSource(i);
+                    Navigator.pop(ctx);
+                  },
+                ),
+            ],
+          ),
         ),
       ),
     );
