@@ -80,6 +80,7 @@ class _MapPageState extends State<MapPage> {
   bool _showLogs = false;
   bool _cartographicMode = false;
   LatLng? _gridOrigin;
+  bool _showCoordinates = false;
 
   bool _measureMode = false;
   bool _eraserMode = false;
@@ -1067,6 +1068,12 @@ class _MapPageState extends State<MapPage> {
         backgroundColor: _showLogs ? Colors.green : null,
         child: const Icon(Icons.terminal),
       ),
+      FloatingActionButton.small(
+        heroTag: 'coords',
+        onPressed: () => setState(() => _showCoordinates = !_showCoordinates),
+        backgroundColor: _showCoordinates ? Colors.blue : null,
+        child: const Icon(Icons.pin_drop),
+      ),
       if (_showLogs) FloatingActionButton.small(
         heroTag: 'debugSim',
         onPressed: _toggleDebugSim,
@@ -1436,15 +1443,17 @@ class _MapPageState extends State<MapPage> {
 
   Widget _buildCrosshairLabels() {
     final center = _mapController.camera.center;
-    final lat = toDms(center.latitude, isLat: true, decimals: 2);
-    final lng = toDms(center.longitude, isLat: false, decimals: 2);
-    final labels = <Widget>[
-      strokeText('$lat  $lng', fill: Colors.white, fontSize: 10),
-    ];
+    final labels = <Widget>[];
+    if (_showCoordinates) {
+      final lat = toDms(center.latitude, isLat: true, decimals: 2);
+      final lng = toDms(center.longitude, isLat: false, decimals: 2);
+      labels.add(strokeText('$lat  $lng', fill: Colors.white, fontSize: 10));
+    }
     if (_waypointMode && _waypoints.isNotEmpty) {
       final dist = _distanceCalc.as(LengthUnit.Meter, _waypoints.last.point, center);
       labels.add(strokeText(fmtDistance(dist), fill: Colors.white70, fontSize: 10));
     }
+    if (labels.isEmpty) return const SizedBox.shrink();
     return IgnorePointer(
       child: Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: labels),
@@ -1682,8 +1691,10 @@ class _MapPageState extends State<MapPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    strokeText(lat, fill: color, fontSize: 9),
-                    strokeText(lng, fill: color, fontSize: 9),
+                    if (_showCoordinates) ...[
+                      strokeText(lat, fill: color, fontSize: 9),
+                      strokeText(lng, fill: color, fontSize: 9),
+                    ],
                     strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
                   ],
                 ),
@@ -1798,8 +1809,10 @@ class _MapPageState extends State<MapPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  strokeText(lat, fill: Colors.teal, fontSize: 9),
-                  strokeText(lng, fill: Colors.teal, fontSize: 9),
+                  if (_showCoordinates) ...[
+                    strokeText(lat, fill: Colors.teal, fontSize: 9),
+                    strokeText(lng, fill: Colors.teal, fontSize: 9),
+                  ],
                   strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
                 ],
               ),
@@ -1884,18 +1897,19 @@ class _MapPageState extends State<MapPage> {
                     ),
                   ),
                 ),
-              Positioned(
-                top: 72,
-                left: 0,
-                right: 0,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    strokeText(lat, fill: Colors.blueAccent, fontSize: 11),
-                    strokeText(lng, fill: Colors.blueAccent, fontSize: 11),
-                  ],
+              if (_showCoordinates)
+                Positioned(
+                  top: 72,
+                  left: 0,
+                  right: 0,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      strokeText(lat, fill: Colors.blueAccent, fontSize: 11),
+                      strokeText(lng, fill: Colors.blueAccent, fontSize: 11),
+                    ],
+                  ),
                 ),
-              ),
               if (hasHeading)
                 Positioned(
                   top: 0,
