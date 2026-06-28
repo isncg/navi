@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:geolocator/geolocator.dart';
@@ -43,7 +44,8 @@ class _MapPageState extends State<MapPage> {
   bool _located = false;
   bool _failed = false;
   final _mapController = MapController();
-  double _heading = 0;
+  double _heading = -1;
+  StreamSubscription<CompassEvent>? _compassSub;
 
   bool _recording = false;
   final _track = <TrackPoint>[];
@@ -123,6 +125,7 @@ class _MapPageState extends State<MapPage> {
     _simTimer?.cancel();
     _safetyTimer?.cancel();
     _exitTipTimer?.cancel();
+    _compassSub?.cancel();
     super.dispose();
   }
 
@@ -171,6 +174,7 @@ class _MapPageState extends State<MapPage> {
       });
       _moveToCurrent();
       _startLocationUpdates();
+      _startCompass();
     } catch (e, st) {
       _log('Position error', error: '$e\n$st');
       if (!mounted) return;
@@ -192,8 +196,17 @@ class _MapPageState extends State<MapPage> {
       if (!mounted || _recording) return;
       setState(() {
         _center = LatLng(pos.latitude, pos.longitude);
-        if (pos.heading >= 0) _heading = pos.heading;
       });
+    });
+  }
+
+  void _startCompass() {
+    _compassSub?.cancel();
+    _compassSub = FlutterCompass.events?.listen((event) {
+      if (!mounted) return;
+      if (event.heading != null) {
+        setState(() => _heading = event.heading!);
+      }
     });
   }
 
@@ -296,7 +309,6 @@ class _MapPageState extends State<MapPage> {
         }
         setState(() {
           _track.add(TrackPoint(p, pos.timestamp, total, segment: _currentSegment));
-          if (pos.heading >= 0) _heading = pos.heading;
         });
       } catch (e) {
         _log('Stream position error', error: e);
