@@ -694,7 +694,7 @@ class _MapPageState extends State<MapPage> {
             top: isLandscape ? 0 : null,
             bottom: isLandscape ? 0 : null,
             right: isLandscape ? 0 : null,
-            left: 0,
+            left: isLandscape ? null : 0,
             child: SafeArea(
               child: Container(
                 width: isLandscape ? size.width * 0.25 : size.width,
