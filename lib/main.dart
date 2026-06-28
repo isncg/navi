@@ -54,6 +54,8 @@ class _MapPageState extends State<MapPage> {
   Timer? _safetyTimer;
   String? _autoSavePath;
   DateTime? _lastBackPress;
+  bool _showExitTip = false;
+  Timer? _exitTipTimer;
   StreamSubscription<Position>? _posSub;
   StreamSubscription<Position>? _locSub;
 
@@ -120,6 +122,7 @@ class _MapPageState extends State<MapPage> {
     _autoSaveTimer?.cancel();
     _simTimer?.cancel();
     _safetyTimer?.cancel();
+    _exitTipTimer?.cancel();
     super.dispose();
   }
 
@@ -514,12 +517,11 @@ class _MapPageState extends State<MapPage> {
           return;
         }
         _lastBackPress = now;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('再按一次退出'),
-            duration: Duration(seconds: 2),
-          ),
-        );
+        _exitTipTimer?.cancel();
+        setState(() => _showExitTip = true);
+        _exitTipTimer = Timer(const Duration(seconds: 2), () {
+          if (mounted) setState(() => _showExitTip = false);
+        });
       },
       child: Scaffold(
       body: Stack(
@@ -615,6 +617,25 @@ class _MapPageState extends State<MapPage> {
               ],
             ),
           _buildLeftButtons(),
+          IgnorePointer(
+            child: Center(
+              child: AnimatedOpacity(
+                opacity: _showExitTip ? 0.85 : 0.0,
+                duration: const Duration(milliseconds: 300),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    '再按一次退出',
+                    style: TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
       floatingActionButton: _buildFabs(),
