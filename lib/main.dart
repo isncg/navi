@@ -441,9 +441,9 @@ class _MapPageState extends State<MapPage> {
 
   String _tilePath(int z, int x, int y) => '${_cacheDir!.path}/$z/$x/$y.png';
 
-  Future<void> _ensureTileCached(int z, int x, int y) async {
+  Future<bool> _ensureTileCached(int z, int x, int y) async {
     final file = File(_tilePath(z, x, y));
-    if (await file.exists()) return;
+    if (await file.exists()) return true;
     final sub = _tileSubdomains[(x + y) % _tileSubdomains.length];
     final url = 'https://webst0$sub.is.autonavi.com/appmaptile?style=6&x=$x&y=$y&z=$z';
     try {
@@ -451,8 +451,10 @@ class _MapPageState extends State<MapPage> {
       if (resp.statusCode == 200) {
         await file.parent.create(recursive: true);
         await file.writeAsBytes(resp.bodyBytes);
+        return true;
       }
     } catch (_) {}
+    return false;
   }
 
   Future<void> _startDownload() async {
@@ -480,17 +482,31 @@ class _MapPageState extends State<MapPage> {
       }
     }
     if (tasks.isEmpty) {
-      if (mounted) setState(() { _downloading = false; _downloadProgress = 0; _downloadTotal = 0; });
+      _log('下载结束: 0/0 张 (全部已缓存)');
+      if (mounted) setState(() { _downloading = false; });
       return;
     }
     _downloadTotal = tasks.length;
+    int failed = 0;
+    final retryList = <_TileCoord>[];
     for (int i = 0; i < tasks.length; i++) {
       if (_downloadCancel) break;
-      final t = tasks[i];
-      await _ensureTileCached(t.z, t.x, t.y);
+      final ok = await _ensureTileCached(tasks[i].z, tasks[i].x, tasks[i].y);
+      if (!ok) { failed++; retryList.add(tasks[i]); }
       if (mounted) setState(() => _downloadProgress = i + 1);
     }
-    if (mounted) setState(() { _downloading = false; _downloadProgress = 0; _downloadTotal = 0; });
+    if (!_downloadCancel && retryList.isNotEmpty) {
+      for (final t in retryList) {
+        if (_downloadCancel) break;
+        final ok = await _ensureTileCached(t.z, t.x, t.y);
+        if (ok) failed--;
+      }
+    }
+    final total = tasks.length;
+    if (mounted) {
+      setState(() { _downloading = false; _downloadProgress = 0; _downloadTotal = 0; });
+      _log('下载结束: ${total - failed}/$total 张 (失败 $failed 张)');
+    }
   }
 
   void _cancelDownload() => setState(() => _downloadCancel = true);
