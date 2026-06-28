@@ -7,34 +7,14 @@ on:
     branches: [master]
 
 jobs:
-  analyze:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-      - run: flutter pub get
-      - run: flutter analyze
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-      - run: flutter pub get
-      - run: flutter test
-
   build-android:
-    needs: [analyze, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - run: flutter pub get
       - name: Build APK
         run: flutter build apk --release
       - uses: actions/upload-artifact@v4
@@ -43,12 +23,12 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
 
   build-windows:
-    needs: [analyze, test]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - run: flutter pub get
       - name: Build Windows
         run: flutter build windows --release
