@@ -1696,34 +1696,30 @@ class _MapPageState extends State<MapPage> {
         Marker(
           point: _center,
           width: 220,
-          height: 70,
+          height: 82,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(height: 26),
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.blueAccent,
-                    ),
-                    width: 16,
-                    height: 16,
-                    child: const Center(
-                      child: Icon(Icons.circle, size: 8, color: Colors.white),
-                    ),
+              if (_heading >= 0)
+                Transform.rotate(
+                  angle: _heading * math.pi / 180,
+                  child: CustomPaint(
+                    size: const Size(12, 16),
+                    painter: _HeadingTrianglePainter(),
                   ),
-                  if (_heading >= 0)
-                    Transform.rotate(
-                      angle: (_heading - 90) * math.pi / 180,
-                      child: CustomPaint(
-                        size: const Size(16, 10),
-                        painter: _HeadingTrianglePainter(),
-                      ),
-                    ),
-                ],
+                )
+              else
+                const SizedBox(height: 16),
+              Container(
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.blueAccent,
+                ),
+                width: 16,
+                height: 16,
+                child: const Center(
+                  child: Icon(Icons.circle, size: 8, color: Colors.white),
+                ),
               ),
               strokeText(lat, fill: Colors.blueAccent, fontSize: 11),
               strokeText(lng, fill: Colors.blueAccent, fontSize: 11),
