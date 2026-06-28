@@ -915,7 +915,11 @@ class _MapPageState extends State<MapPage> {
       if (_savedWaypoints.isNotEmpty) {
         buttons.add(FloatingActionButton.small(
           heroTag: 'clearSaved',
-          onPressed: () => setState(() => _savedWaypoints.clear()),
+          onPressed: () => setState(() {
+            _editingSavedSetIndex = -1;
+            _editingSavedIndex = -1;
+            _savedWaypoints.clear();
+          }),
           backgroundColor: Colors.red.shade800,
           child: const Icon(Icons.layers_clear),
         ));
@@ -937,6 +941,7 @@ class _MapPageState extends State<MapPage> {
         heroTag: 'saveWaypoints',
         onPressed: _waypoints.length >= 2
             ? () => setState(() {
+                  _editingWaypointIndex = -1;
                   _savedWaypoints.add(List.from(_waypoints));
                   _waypoints.clear();
                 })
@@ -949,7 +954,7 @@ class _MapPageState extends State<MapPage> {
         onPressed: () {
           setState(() {
             _waypointMode = !_waypointMode;
-            if (!_waypointMode) _waypoints.clear();
+            if (!_waypointMode) { _editingWaypointIndex = -1; _waypoints.clear(); }
           });
         },
         backgroundColor: _waypointMode ? Colors.red : null,
@@ -1008,7 +1013,7 @@ class _MapPageState extends State<MapPage> {
         onPressed: () {
           setState(() {
             _waypointMode = !_waypointMode;
-            if (!_waypointMode) _waypoints.clear();
+            if (!_waypointMode) { _editingWaypointIndex = -1; _waypoints.clear(); }
           });
         },
         backgroundColor: _waypointMode ? Colors.orange : null,
