@@ -531,9 +531,12 @@ class _MapPageState extends State<MapPage> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
+    final editing = (_waypointMode && _editingWaypointIndex >= 0) || _editingSavedSetIndex >= 0;
+    return Stack(
+      children: [
+        PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         final now = DateTime.now();
         if (_lastBackPress != null &&
@@ -628,7 +631,6 @@ class _MapPageState extends State<MapPage> {
             const SizedBox.expand(child: Center(child: CircularProgressIndicator())),
               if (_recording || _waypointMode) _buildBottomBar(),
           if (_loadedTrack != null) _buildLoadedTrackBar(),
-          if ((_waypointMode && _editingWaypointIndex >= 0) || _editingSavedSetIndex >= 0) _buildWaypointEditPanel(),
           if (_cartographicMode) _buildZoomLabel(),
 
           if (_showLogs) _buildLogPanel(),
@@ -667,7 +669,10 @@ class _MapPageState extends State<MapPage> {
         ],
       ),
       floatingActionButton: _buildFabs(),
+        ),
       ),
+      if (editing) _buildWaypointEditPanel(),
+    ],
     );
   }
 
