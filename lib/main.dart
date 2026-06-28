@@ -1710,6 +1710,19 @@ class _MapPageState extends State<MapPage> {
 
     return MarkerLayer(
       markers: [
+        if (hasHeading)
+          Marker(
+            point: _center,
+            width: 60,
+            height: 28,
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 28),
+                child: strokeText('${_heading.toStringAsFixed(0)}°', fill: Colors.blueAccent, fontSize: 10),
+              ),
+            ),
+          ),
         Marker(
           point: _center,
           width: 40,
@@ -1748,11 +1761,11 @@ class _MapPageState extends State<MapPage> {
         Marker(
           point: _center,
           width: 220,
-          height: 28,
+          height: 56,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(height: 4),
+              const SizedBox(height: 24),
               strokeText(lat, fill: Colors.blueAccent, fontSize: 11),
               strokeText(lng, fill: Colors.blueAccent, fontSize: 11),
             ],
