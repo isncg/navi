@@ -1710,27 +1710,10 @@ class _MapPageState extends State<MapPage> {
 
     return MarkerLayer(
       markers: [
-        if (hasHeading)
-          Marker(
-            point: _center,
-            width: 60,
-            height: 28,
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 28),
-                child: strokeText(
-                  '${_heading.toStringAsFixed(0).padLeft(3, '0')} ${bearingToCardinal(_heading)}',
-                  fill: Colors.blueAccent,
-                  fontSize: 10,
-                ),
-              ),
-            ),
-          ),
         Marker(
           point: _center,
-          width: 40,
-          height: 40,
+          width: 220,
+          height: 100,
           child: Stack(
             clipBehavior: Clip.none,
             children: [
@@ -1749,8 +1732,8 @@ class _MapPageState extends State<MapPage> {
               ),
               if (hasHeading)
                 Positioned(
-                  left: 20 + triDx - 6,
-                  top: 20 + triDy - 8,
+                  left: 110 + triDx - 6,
+                  top: 50 + triDy - 8,
                   child: Transform.rotate(
                     angle: headingRad,
                     child: CustomPaint(
@@ -1759,19 +1742,31 @@ class _MapPageState extends State<MapPage> {
                     ),
                   ),
                 ),
-            ],
-          ),
-        ),
-        Marker(
-          point: _center,
-          width: 220,
-          height: 56,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 24),
-              strokeText(lat, fill: Colors.blueAccent, fontSize: 11),
-              strokeText(lng, fill: Colors.blueAccent, fontSize: 11),
+              Positioned(
+                top: 72,
+                left: 0,
+                right: 0,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    strokeText(lat, fill: Colors.blueAccent, fontSize: 11),
+                    strokeText(lng, fill: Colors.blueAccent, fontSize: 11),
+                  ],
+                ),
+              ),
+              if (hasHeading)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: strokeText(
+                      '${_heading.toStringAsFixed(0).padLeft(3, '0')} ${bearingToCardinal(_heading)}',
+                      fill: Colors.blueAccent,
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
