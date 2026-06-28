@@ -584,7 +584,7 @@ class _MapPageState extends State<MapPage> {
                   evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
                 ),
               if (_cartographicMode) _buildGridLayer(),
-              if (_located) _buildLocationMarker(),
+              if (_located && !_recording) _buildLocationMarker(),
               if (_track.length >= 2) _buildTrackPolyline(),
               if (_track.length >= 2) MarkerLayer(markers: _buildTrackLabels()),
               if (_loadedTrack != null && _loadedTrack!.length >= 2) ...[
