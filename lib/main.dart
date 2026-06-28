@@ -66,6 +66,8 @@ class _MapPageState extends State<MapPage> {
   final _savedWaypoints = <List<Waypoint>>[];
   int _cameraVersion = 0;
   int _editingWaypointIndex = -1;
+  int _editingSavedSetIndex = -1;
+  int _editingSavedIndex = -1;
   final _editController = TextEditingController();
 
   final _savedRecordings = <SavedRecording>[];
@@ -623,7 +625,7 @@ class _MapPageState extends State<MapPage> {
             const SizedBox.expand(child: Center(child: CircularProgressIndicator())),
               if (_recording || _waypointMode) _buildBottomBar(),
           if (_loadedTrack != null) _buildLoadedTrackBar(),
-          if (_waypointMode && _editingWaypointIndex >= 0) _buildWaypointEditPanel(),
+          if ((_waypointMode && _editingWaypointIndex >= 0) || _editingSavedSetIndex >= 0) _buildWaypointEditPanel(),
           if (_cartographicMode) _buildZoomLabel(),
 
           if (_showLogs) _buildLogPanel(),
@@ -667,7 +669,10 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget _buildWaypointEditPanel() {
-    final wp = _waypoints[_editingWaypointIndex];
+    final isSaved = _editingSavedSetIndex >= 0;
+    final wp = isSaved
+        ? _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex]
+        : _waypoints[_editingWaypointIndex];
     final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     final size = MediaQuery.of(context).size;
     if (_editController.text != wp.name) {
@@ -696,11 +701,15 @@ class _MapPageState extends State<MapPage> {
               children: [
                 Row(
                   children: [
-                    Text('路径点 ${_editingWaypointIndex + 1}',
+                    Text(isSaved ? '已保存路径点 ${_editingSavedIndex + 1}' : '路径点 ${_editingWaypointIndex + 1}',
                       style: const TextStyle(color: Colors.white70, fontSize: 13)),
                     const Spacer(),
                     GestureDetector(
-                      onTap: () => setState(() => _editingWaypointIndex = -1),
+                      onTap: () => setState(() {
+                        _editingWaypointIndex = -1;
+                        _editingSavedSetIndex = -1;
+                        _editingSavedIndex = -1;
+                      }),
                       child: const Icon(Icons.close, color: Colors.white54, size: 18),
                     ),
                   ],
@@ -717,7 +726,12 @@ class _MapPageState extends State<MapPage> {
                     isDense: true,
                   ),
                   onChanged: (v) {
-                    _waypoints[_editingWaypointIndex] = wp.copyWith(name: v);
+                    final updated = wp.copyWith(name: v);
+                    if (isSaved) {
+                      _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex] = updated;
+                    } else {
+                      _waypoints[_editingWaypointIndex] = updated;
+                    }
                     setState(() {});
                   },
                 ),
@@ -728,8 +742,12 @@ class _MapPageState extends State<MapPage> {
                   child: ElevatedButton(
                     onPressed: _waypointMode
                         ? () => setState(() {
-                              _waypoints[_editingWaypointIndex] =
-                                  wp.copyWith(point: _mapController.camera.center);
+                              final moved = wp.copyWith(point: _mapController.camera.center);
+                              if (isSaved) {
+                                _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex] = moved;
+                              } else {
+                                _waypoints[_editingWaypointIndex] = moved;
+                              }
                             })
                         : null,
                     style: ElevatedButton.styleFrom(
@@ -1736,7 +1754,12 @@ class _MapPageState extends State<MapPage> {
         point: p,
         width: 200,
         height: 24,
-        child: Stack(
+        child: GestureDetector(
+          onTap: () => setState(() {
+            _editingSavedSetIndex = si;
+            _editingSavedIndex = i;
+          }),
+          child: Stack(
           clipBehavior: Clip.none,
           alignment: Alignment.topCenter,
           children: [
@@ -1777,6 +1800,7 @@ class _MapPageState extends State<MapPage> {
               ),
             ),
           ],
+        ),
         ),
       ));
     }
