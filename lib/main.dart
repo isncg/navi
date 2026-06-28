@@ -1719,7 +1719,11 @@ class _MapPageState extends State<MapPage> {
               alignment: Alignment.bottomCenter,
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 28),
-                child: strokeText('${_heading.toStringAsFixed(0)}°', fill: Colors.blueAccent, fontSize: 10),
+                child: strokeText(
+                  '${_heading.toStringAsFixed(0).padLeft(3, '0')} ${bearingToCardinal(_heading)}',
+                  fill: Colors.blueAccent,
+                  fontSize: 10,
+                ),
               ),
             ),
           ),
