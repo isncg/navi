@@ -31,6 +31,14 @@ class Measurement {
   const Measurement(this.from, this.to);
 }
 
+class Waypoint {
+  final LatLng point;
+  final String name;
+  const Waypoint(this.point, {this.name = ''});
+  Waypoint copyWith({LatLng? point, String? name}) =>
+      Waypoint(point ?? this.point, name: name ?? this.name);
+}
+
 String fmtDuration(int s) {
   if (s < 0) return '--:--';
   if (s > 863999) return '${(s / 3600).toStringAsFixed(1)}h';

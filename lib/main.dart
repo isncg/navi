@@ -62,9 +62,11 @@ class _MapPageState extends State<MapPage> {
   StreamSubscription<Position>? _locSub;
 
   bool _waypointMode = false;
-  final _waypoints = <LatLng>[];
-  final _savedWaypoints = <List<LatLng>>[];
+  final _waypoints = <Waypoint>[];
+  final _savedWaypoints = <List<Waypoint>>[];
   int _cameraVersion = 0;
+  int _editingWaypointIndex = -1;
+  final _editController = TextEditingController();
 
   final _savedRecordings = <SavedRecording>[];
   List<TrackPoint>? _loadedTrack;
@@ -126,6 +128,7 @@ class _MapPageState extends State<MapPage> {
     _safetyTimer?.cancel();
     _exitTipTimer?.cancel();
     _compassSub?.cancel();
+    _editController.dispose();
     super.dispose();
   }
 
@@ -620,6 +623,7 @@ class _MapPageState extends State<MapPage> {
             const SizedBox.expand(child: Center(child: CircularProgressIndicator())),
               if (_recording || _waypointMode) _buildBottomBar(),
           if (_loadedTrack != null) _buildLoadedTrackBar(),
+          if (_waypointMode && _editingWaypointIndex >= 0) _buildWaypointEditPanel(),
           if (_cartographicMode) _buildZoomLabel(),
 
           if (_showLogs) _buildLogPanel(),
@@ -658,6 +662,87 @@ class _MapPageState extends State<MapPage> {
         ],
       ),
       floatingActionButton: _buildFabs(),
+      ),
+    );
+  }
+
+  Widget _buildWaypointEditPanel() {
+    final wp = _waypoints[_editingWaypointIndex];
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final size = MediaQuery.of(context).size;
+    if (_editController.text != wp.name) {
+      _editController.text = wp.name;
+    }
+
+    return Positioned(
+      top: isLandscape ? 0 : null,
+      bottom: isLandscape ? 0 : null,
+      right: isLandscape ? 0 : null,
+      left: 0,
+      child: SafeArea(
+        child: Container(
+          width: isLandscape ? size.width * 0.25 : size.width,
+          height: isLandscape ? size.height : size.height * 0.25,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          margin: const EdgeInsets.all(12),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('路径点 ${_editingWaypointIndex + 1}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: () => setState(() => _editingWaypointIndex = -1),
+                      child: const Icon(Icons.close, color: Colors.white54, size: 18),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _editController,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(
+                    hintText: '名称',
+                    hintStyle: TextStyle(color: Colors.white30),
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    isDense: true,
+                  ),
+                  onChanged: (v) {
+                    _waypoints[_editingWaypointIndex] = wp.copyWith(name: v);
+                    setState(() {});
+                  },
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: double.infinity,
+                  height: 32,
+                  child: ElevatedButton(
+                    onPressed: _waypointMode
+                        ? () => setState(() {
+                              _waypoints[_editingWaypointIndex] =
+                                  wp.copyWith(point: _mapController.camera.center);
+                            })
+                        : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: const Text('十字准星定位', style: TextStyle(fontSize: 12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -826,7 +911,7 @@ class _MapPageState extends State<MapPage> {
       }
       buttons.add(FloatingActionButton.small(
         heroTag: 'addWaypoint',
-        onPressed: () => setState(() => _waypoints.add(_mapController.camera.center)),
+          onPressed: () => setState(() => _waypoints.add(Waypoint(_mapController.camera.center))),
         backgroundColor: Colors.orange,
         child: const Icon(Icons.add_location),
       ));
@@ -1334,7 +1419,7 @@ class _MapPageState extends State<MapPage> {
       strokeText('$lat  $lng', fill: Colors.white, fontSize: 10),
     ];
     if (_waypointMode && _waypoints.isNotEmpty) {
-      final dist = _distanceCalc.as(LengthUnit.Meter, _waypoints.last, center);
+      final dist = _distanceCalc.as(LengthUnit.Meter, _waypoints.last.point, center);
       labels.add(strokeText(fmtDistance(dist), fill: Colors.white70, fontSize: 10));
     }
     return IgnorePointer(
@@ -1472,7 +1557,7 @@ class _MapPageState extends State<MapPage> {
   double _waypointTotalDistance() {
     double d = 0;
     for (int i = 1; i < _waypoints.length; i++) {
-      d += _distanceCalc.as(LengthUnit.Meter, _waypoints[i - 1], _waypoints[i]);
+      d += _distanceCalc.as(LengthUnit.Meter, _waypoints[i - 1].point, _waypoints[i].point);
     }
     return d;
   }
@@ -1494,7 +1579,7 @@ class _MapPageState extends State<MapPage> {
     final lines = <Polyline>[];
     for (int i = 1; i < _waypoints.length; i++) {
       lines.add(Polyline(
-        points: [_waypoints[i - 1], _waypoints[i]],
+        points: [_waypoints[i - 1].point, _waypoints[i].point],
         color: i.isOdd ? Colors.orange : Colors.deepOrange,
         strokeWidth: 3,
         pattern: StrokePattern.dotted(),
@@ -1509,7 +1594,7 @@ class _MapPageState extends State<MapPage> {
     return PolylineLayer(
       polylines: [
         Polyline(
-          points: [_waypoints.last, center],
+          points: [_waypoints.last.point, center],
           color: i.isOdd ? Colors.orange : Colors.deepOrange,
           strokeWidth: 3,
           pattern: StrokePattern.dotted(),
@@ -1523,8 +1608,9 @@ class _MapPageState extends State<MapPage> {
     double cum = 0;
     LatLng? prevShown;
     for (int i = 0; i < _waypoints.length; i++) {
-      final p = _waypoints[i];
-      if (i > 0) cum += _distanceCalc.as(LengthUnit.Meter, _waypoints[i - 1], p);
+      final wp = _waypoints[i];
+      final p = wp.point;
+      if (i > 0) cum += _distanceCalc.as(LengthUnit.Meter, _waypoints[i - 1].point, p);
       if (prevShown != null && _screenDistance(prevShown, p) < 28 && i != _waypoints.length - 1) {
         continue;
       }
@@ -1532,44 +1618,55 @@ class _MapPageState extends State<MapPage> {
       final lat = toDms(p.latitude, isLat: true);
       final lng = toDms(p.longitude, isLat: false);
       final color = i == 0 ? Colors.green : Colors.orange;
+      final name = wp.name;
       markers.add(Marker(
         point: p,
         width: 200,
         height: 24,
-        child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.topCenter,
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                color: color,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3)],
-              ),
-              width: 24,
-              height: 24,
-              child: Center(
-                child: Text(
-                  '${i + 1}',
-                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+        child: GestureDetector(
+          onTap: () => setState(() => _editingWaypointIndex = i),
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.topCenter,
+            children: [
+              if (name.isNotEmpty)
+                Positioned(
+                  top: -16,
+                  left: 0,
+                  right: 0,
+                  child: strokeText(name, fill: color, fontSize: 10),
+                ),
+              Container(
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3)],
+                ),
+                width: 24,
+                height: 24,
+                child: Center(
+                  child: Text(
+                    '${i + 1}',
+                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ),
-            ),
-            Positioned(
-              top: 28,
-              left: 0,
-              right: 0,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  strokeText(lat, fill: color, fontSize: 9),
-                  strokeText(lng, fill: color, fontSize: 9),
-                  strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
-                ],
+              Positioned(
+                top: 28,
+                left: 0,
+                right: 0,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    strokeText(lat, fill: color, fontSize: 9),
+                    strokeText(lng, fill: color, fontSize: 9),
+                    strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ));
     }
@@ -1579,8 +1676,8 @@ class _MapPageState extends State<MapPage> {
   List<Marker> _buildWaypointLabels() {
     final labels = <Marker>[];
     for (int i = 1; i < _waypoints.length; i++) {
-      final p1 = _waypoints[i - 1];
-      final p2 = _waypoints[i];
+      final p1 = _waypoints[i - 1].point;
+      final p2 = _waypoints[i].point;
 
       if (_screenDistance(p1, p2) < 60) continue;
 
@@ -1611,7 +1708,7 @@ class _MapPageState extends State<MapPage> {
     final lines = <Polyline>[];
     for (int i = 1; i < pts.length; i++) {
       lines.add(Polyline(
-        points: [pts[i - 1], pts[i]],
+        points: [pts[i - 1].point, pts[i].point],
         color: Colors.tealAccent,
         strokeWidth: 3,
         pattern: StrokePattern.dotted(),
@@ -1626,21 +1723,30 @@ class _MapPageState extends State<MapPage> {
     double cum = 0;
     LatLng? prevShown;
     for (int i = 0; i < pts.length; i++) {
-      if (i > 0) cum += _distanceCalc.as(LengthUnit.Meter, pts[i - 1], pts[i]);
-      if (prevShown != null && _screenDistance(prevShown, pts[i]) < 28 && i != pts.length - 1) {
+      final wp = pts[i];
+      final p = wp.point;
+      if (i > 0) cum += _distanceCalc.as(LengthUnit.Meter, pts[i - 1].point, p);
+      if (prevShown != null && _screenDistance(prevShown, p) < 28 && i != pts.length - 1) {
         continue;
       }
-      prevShown = pts[i];
-      final lat = toDms(pts[i].latitude, isLat: true);
-      final lng = toDms(pts[i].longitude, isLat: false);
+      prevShown = p;
+      final lat = toDms(p.latitude, isLat: true);
+      final lng = toDms(p.longitude, isLat: false);
       markers.add(Marker(
-        point: pts[i],
+        point: p,
         width: 200,
         height: 24,
         child: Stack(
           clipBehavior: Clip.none,
           alignment: Alignment.topCenter,
           children: [
+            if (wp.name.isNotEmpty)
+              Positioned(
+                top: -16,
+                left: 0,
+                right: 0,
+                child: strokeText(wp.name, fill: Colors.teal, fontSize: 10),
+              ),
             Container(
               decoration: BoxDecoration(
                 color: Colors.teal,
@@ -1681,8 +1787,8 @@ class _MapPageState extends State<MapPage> {
     final pts = _savedWaypoints[si];
     final labels = <Marker>[];
     for (int i = 1; i < pts.length; i++) {
-      final p1 = pts[i - 1];
-      final p2 = pts[i];
+      final p1 = pts[i - 1].point;
+      final p2 = pts[i].point;
 
       if (_screenDistance(p1, p2) < 60) continue;
 
