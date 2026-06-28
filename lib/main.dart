@@ -10,6 +10,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
 
 import 'common.dart';
 
@@ -88,6 +89,14 @@ class _MapPageState extends State<MapPage> {
   bool _measuring = false;
   LatLng? _measureStart;
 
+  bool _downloading = false;
+  int _downloadProgress = 0;
+  int _downloadTotal = 0;
+  bool _downloadCancel = false;
+  Directory? _cacheDir;
+
+  static const _tileSubdomains = ['1', '2', '3', '4'];
+
   bool _debugSim = false;
   Timer? _simTimer;
   LatLng? _simPos;
@@ -113,6 +122,7 @@ class _MapPageState extends State<MapPage> {
     _locate();
     _loadSavedRecordings();
     _checkAutoSaveRecovery();
+    _initCacheDir();
     _safetyTimer = Timer(const Duration(seconds: 20), () {
       if (mounted && !_located && !_failed) {
         _log('Location safety timeout: forcing failed');
@@ -423,6 +433,62 @@ class _MapPageState extends State<MapPage> {
     _autoSavePath = null;
   }
 
+  Future<void> _initCacheDir() async {
+    final docDir = await getApplicationDocumentsDirectory();
+    _cacheDir = Directory('${docDir.path}/tile_cache');
+    if (!await _cacheDir!.exists()) await _cacheDir!.create(recursive: true);
+  }
+
+  String _tilePath(int z, int x, int y) => '${_cacheDir!.path}/$z/$x/$y.png';
+
+  Future<void> _ensureTileCached(int z, int x, int y) async {
+    final file = File(_tilePath(z, x, y));
+    if (await file.exists()) return;
+    final sub = _tileSubdomains[(x + y) % _tileSubdomains.length];
+    final url = 'https://webst0$sub.is.autonavi.com/appmaptile?style=6&x=$x&y=$y&z=$z';
+    try {
+      final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(resp.bodyBytes);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _startDownload() async {
+    if (_downloading) return;
+    setState(() { _downloading = true; _downloadCancel = false; _downloadProgress = 0; _downloadTotal = 0; });
+    final center = _mapController.camera.center;
+    final zoom = _mapController.camera.zoom.round();
+    const areaM = 1000.0;
+    final latDeg = areaM / 111320.0;
+    final lngDeg = areaM / (111320.0 * math.cos(center.latitude * math.pi / 180));
+    final tasks = <_TileCoord>[];
+    for (int z = (zoom - 2).clamp(2, 18); z <= (zoom + 2).clamp(2, 18); z++) {
+      final n = 1 << z;
+      final xMin = ((center.longitude + 180) / 360 * n).floor() - 1;
+      final xMax = xMin + (lngDeg * n / 360).ceil() + 2;
+      final yLat = (1 - math.log(math.tan(center.latitude * math.pi / 180) + 1 / math.cos(center.latitude * math.pi / 180)) / math.pi) / 2;
+      final yMin = (yLat * n).floor() - 1;
+      final yMax = yMin + (latDeg * n / 180).ceil() + 2;
+      for (int x = xMin; x <= xMax; x++) {
+        for (int y = yMin; y <= yMax; y++) {
+          tasks.add(_TileCoord(z, x, y));
+        }
+      }
+    }
+    _downloadTotal = tasks.length;
+    for (int i = 0; i < tasks.length; i++) {
+      if (_downloadCancel) break;
+      final t = tasks[i];
+      await _ensureTileCached(t.z, t.x, t.y);
+      if (mounted) setState(() => _downloadProgress = i + 1);
+    }
+    if (mounted) setState(() { _downloading = false; _downloadProgress = 0; _downloadTotal = 0; });
+  }
+
+  void _cancelDownload() => setState(() => _downloadCancel = true);
+
   Future<void> _checkAutoSaveRecovery() async {
     try {
       final dir = await _trackDir();
@@ -591,6 +657,7 @@ class _MapPageState extends State<MapPage> {
                     urlTemplate:
                         'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
                     subdomains: const ['1', '2', '3', '4'],
+                    tileProvider: CachedTileProvider(_cacheDir!),
                     evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
                   ),
                 )
@@ -599,6 +666,7 @@ class _MapPageState extends State<MapPage> {
                   urlTemplate:
                       'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
                   subdomains: const ['1', '2', '3', '4'],
+                  tileProvider: CachedTileProvider(_cacheDir!),
                   evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
                 ),
               if (_cartographicMode) _buildGridLayer(),
@@ -630,6 +698,7 @@ class _MapPageState extends State<MapPage> {
           else
             const SizedBox.expand(child: Center(child: CircularProgressIndicator())),
               if (_recording || _waypointMode) _buildBottomBar(),
+          if (_downloading) _buildDownloadProgress(),
           if (_loadedTrack != null) _buildLoadedTrackBar(),
           if (_cartographicMode) _buildZoomLabel(),
 
@@ -1070,6 +1139,12 @@ class _MapPageState extends State<MapPage> {
         child: const Icon(Icons.screen_rotation),
       ),
       FloatingActionButton.small(
+        heroTag: 'download',
+        onPressed: _downloading ? _cancelDownload : _startDownload,
+        backgroundColor: _downloading ? Colors.red : null,
+        child: Icon(_downloading ? Icons.stop : Icons.download),
+      ),
+      FloatingActionButton.small(
         heroTag: 'logs',
         onPressed: () => setState(() => _showLogs = !_showLogs),
         backgroundColor: _showLogs ? Colors.green : null,
@@ -1218,7 +1293,40 @@ class _MapPageState extends State<MapPage> {
       lng += lngDeg;
     }
 
-    return PolylineLayer(polylines: lines);
+    return PolylineLayer(polylines: lines    );
+  }
+
+  Widget _buildDownloadProgress() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.download, color: Colors.white70, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                '${(_downloadProgress / _downloadTotal * 100).toStringAsFixed(0)}%',
+                style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'monospace'),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '$_downloadProgress / $_downloadTotal',
+                style: const TextStyle(color: Colors.white54, fontSize: 12, fontFamily: 'monospace'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildLoadedTrackBar() {
@@ -1971,4 +2079,26 @@ class _CrosshairPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _TileCoord {
+  final int z, x, y;
+  const _TileCoord(this.z, this.x, this.y);
+}
+
+class CachedTileProvider extends TileProvider {
+  CachedTileProvider(this.cacheDir);
+
+  final Directory cacheDir;
+
+  String _tilePath(int z, int x, int y) => '${cacheDir.path}/$z/$x/$y.png';
+
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
+    final file = File(_tilePath(coordinates.z, coordinates.x, coordinates.y));
+    if (file.existsSync()) {
+      return FileImage(file);
+    }
+    return NetworkTileProvider().getImage(coordinates, options);
+  }
 }
