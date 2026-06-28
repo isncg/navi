@@ -679,88 +679,88 @@ class _MapPageState extends State<MapPage> {
       _editController.text = wp.name;
     }
 
-    return Positioned(
-      top: isLandscape ? 0 : null,
-      bottom: isLandscape ? 0 : null,
-      right: isLandscape ? 0 : null,
-      left: 0,
-      child: SafeArea(
-        child: Container(
-          width: isLandscape ? size.width * 0.25 : size.width,
-          height: isLandscape ? size.height : size.height * 0.25,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.black87,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          margin: const EdgeInsets.all(12),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(isSaved ? '已保存路径点 ${_editingSavedIndex + 1}' : '路径点 ${_editingWaypointIndex + 1}',
-                      style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => setState(() {
-                        _editingWaypointIndex = -1;
-                        _editingSavedSetIndex = -1;
-                        _editingSavedIndex = -1;
-                      }),
-                      child: const Icon(Icons.close, color: Colors.white54, size: 18),
-                    ),
-                  ],
+    void close() => setState(() {
+          _editingWaypointIndex = -1;
+          _editingSavedSetIndex = -1;
+          _editingSavedIndex = -1;
+        });
+
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          GestureDetector(onTap: close, behavior: HitTestBehavior.translucent),
+          Positioned(
+            top: isLandscape ? 0 : null,
+            bottom: isLandscape ? 0 : null,
+            right: isLandscape ? 0 : null,
+            left: 0,
+            child: SafeArea(
+              child: Container(
+                width: isLandscape ? size.width * 0.25 : size.width,
+                height: isLandscape ? size.height : size.height * 0.25,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _editController,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: const InputDecoration(
-                    hintText: '名称',
-                    hintStyle: TextStyle(color: Colors.white30),
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    isDense: true,
+                margin: const EdgeInsets.all(12),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(isSaved ? '已保存路径点 ${_editingSavedIndex + 1}' : '路径点 ${_editingWaypointIndex + 1}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _editController,
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        decoration: const InputDecoration(
+                          hintText: '名称',
+                          hintStyle: TextStyle(color: Colors.white30),
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          isDense: true,
+                        ),
+                        onChanged: (v) {
+                          final updated = wp.copyWith(name: v);
+                          if (isSaved) {
+                            _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex] = updated;
+                          } else {
+                            _waypoints[_editingWaypointIndex] = updated;
+                          }
+                          setState(() {});
+                        },
+                      ),
+                      const SizedBox(height: 4),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 32,
+                        child: ElevatedButton(
+                          onPressed: _waypointMode
+                              ? () => setState(() {
+                                    final moved = wp.copyWith(point: _mapController.camera.center);
+                                    if (isSaved) {
+                                      _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex] = moved;
+                                    } else {
+                                      _waypoints[_editingWaypointIndex] = moved;
+                                    }
+                                  })
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            padding: EdgeInsets.zero,
+                          ),
+                          child: const Text('十字准星定位', style: TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                    ],
                   ),
-                  onChanged: (v) {
-                    final updated = wp.copyWith(name: v);
-                    if (isSaved) {
-                      _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex] = updated;
-                    } else {
-                      _waypoints[_editingWaypointIndex] = updated;
-                    }
-                    setState(() {});
-                  },
                 ),
-                const SizedBox(height: 4),
-                SizedBox(
-                  width: double.infinity,
-                  height: 32,
-                  child: ElevatedButton(
-                    onPressed: _waypointMode
-                        ? () => setState(() {
-                              final moved = wp.copyWith(point: _mapController.camera.center);
-                              if (isSaved) {
-                                _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex] = moved;
-                              } else {
-                                _waypoints[_editingWaypointIndex] = moved;
-                              }
-                            })
-                        : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: const Text('十字准星定位', style: TextStyle(fontSize: 12)),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
