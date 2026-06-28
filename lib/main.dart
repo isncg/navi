@@ -260,13 +260,20 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  LocationSettings _locationSettings({int distanceFilter = 0, bool streaming = false}) {
+  LocationSettings _locationSettings({int distanceFilter = 0, bool streaming = false, bool foreground = false}) {
     if (Platform.isAndroid) {
       return AndroidSettings(
         accuracy: LocationAccuracy.best,
         distanceFilter: distanceFilter,
         forceLocationManager: true,
         timeLimit: streaming ? null : const Duration(seconds: 15),
+        foregroundNotificationConfig: foreground
+            ? const ForegroundNotificationConfig(
+                notificationText: 'Navi 正在记录轨迹',
+                notificationTitle: '跟踪记录中',
+                enableWifiLock: true,
+              )
+            : null,
       );
     }
     return LocationSettings(
@@ -288,7 +295,7 @@ class _MapPageState extends State<MapPage> {
       _startSimTimer();
     } else {
       _posSub = Geolocator.getPositionStream(
-      locationSettings: _locationSettings(distanceFilter: 2, streaming: true),
+      locationSettings: _locationSettings(distanceFilter: 2, streaming: true, foreground: true),
     ).listen((pos) {
       if (!mounted) return;
       try {
