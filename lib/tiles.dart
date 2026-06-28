@@ -31,8 +31,9 @@ class CachedTileProvider extends TileProvider {
 }
 
 const tileSources = [
-  ('ArcGIS', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', <String>[]),
-  ('ESRI Clarity', 'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', <String>[]),
+  ('ArcGIS', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', <String>[], false),
+  ('ESRI Clarity', 'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', <String>[], false),
+  ('高德卫星', 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', ['1', '2', '3', '4'], true),
 ];
 
 Future<Directory> initTileCacheDir(int sourceIndex) async {
