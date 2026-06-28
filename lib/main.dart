@@ -586,14 +586,16 @@ class _MapPageState extends State<MapPage> {
                   ]),
                   child: TileLayer(
                     urlTemplate:
-                        'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                        'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+                    subdomains: const ['1', '2', '3', '4'],
                     evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
                   ),
                 )
               else
                 TileLayer(
                   urlTemplate:
-                      'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                      'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+                  subdomains: const ['1', '2', '3', '4'],
                   evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
                 ),
               if (_cartographicMode) _buildGridLayer(),
