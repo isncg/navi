@@ -39,4 +39,4 @@ lib/
 
 ## 注意
 
-高德卫星图（GCJ-02）与 GPS（WGS-84）存在坐标偏移，默认使用 ArcGIS。
+ArcGIS / ESRI Clarity 使用 WGS-84 坐标，与 GPS 一致；高德卫星图因 GCJ-02 偏移已移除。

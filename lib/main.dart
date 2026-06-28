@@ -94,7 +94,7 @@ class _MapPageState extends State<MapPage> {
   int _downloadTotal = 0;
   bool _downloadCancel = false;
   Directory? _cacheDir;
-  int _tileSourceIndex = 1;
+  int _tileSourceIndex = 0;
 
   bool _debugSim = false;
   Timer? _simTimer;
