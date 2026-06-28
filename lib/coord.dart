@@ -1,6 +1,8 @@
 import 'dart:math' as math;
-import 'package:latlong2/latlong.dart';
+import 'dart:ui';
 
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 const _a = 6378245.0;
 const _ee = 0.00669342162296594323;
 
@@ -45,4 +47,18 @@ LatLng gcj02ToWgs84(LatLng p) {
     wgs = LatLng(wgs.latitude - (gcj.latitude - p.latitude), wgs.longitude - (gcj.longitude - p.longitude));
   }
   return wgs;
+}
+
+class Gcj02Crs extends Epsg3857 {
+  const Gcj02Crs();
+
+  @override
+  (double, double) latLngToXY(LatLng latlng, double scale) {
+    return super.latLngToXY(wgs84ToGcj02(latlng), scale);
+  }
+
+  @override
+  LatLng offsetToLatLng(Offset point, double zoom) {
+    return gcj02ToWgs84(super.offsetToLatLng(point, zoom));
+  }
 }

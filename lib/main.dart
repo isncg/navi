@@ -99,7 +99,6 @@ class _MapPageState extends State<MapPage> {
 
   bool get _usingGcj02 => tileSources[_tileSourceIndex].$4;
   LatLng _forMap(LatLng p) => _usingGcj02 ? wgs84ToGcj02(p) : p;
-  LatLng _fromMap(LatLng p) => _usingGcj02 ? gcj02ToWgs84(p) : p;
 
   bool _debugSim = false;
   Timer? _simTimer;
@@ -193,7 +192,7 @@ class _MapPageState extends State<MapPage> {
         _center = LatLng(position.latitude, position.longitude);
         _located = true;
       });
-      _mapController.move(_forMap(_center), 18);
+      _mapController.move(_center, 18);
       _startLocationUpdates();
       _startCompass();
     } catch (e, st) {
@@ -384,7 +383,8 @@ class _MapPageState extends State<MapPage> {
     final center = _mapController.camera.center;
     final zoom = _mapController.camera.zoom.round();
     final (_, urlTemplate, subdomains, _) = tileSources[_tileSourceIndex];
-    final allTasks = computeTileCoords(center.latitude, center.longitude, zoom, 1000.0);
+    final gcjCenter = _forMap(center);
+    final allTasks = computeTileCoords(gcjCenter.latitude, gcjCenter.longitude, zoom, 1000.0);
     final tasks = <TileCoord>[];
     for (final t in allTasks) {
       if (!File(tileCachePath(_cacheDir!, t.z, t.x, t.y)).existsSync()) tasks.add(t);
@@ -464,8 +464,9 @@ class _MapPageState extends State<MapPage> {
             mapController: _mapController,
             options: MapOptions(
               backgroundColor: Colors.black87,
-              initialCenter: _forMap(_center),
+              initialCenter: _center,
               initialZoom: _located ? 18 : (_failed ? 2 : 16),
+              crs: _usingGcj02 ? Gcj02Crs() : Epsg3857(),
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
@@ -642,7 +643,7 @@ class _MapPageState extends State<MapPage> {
                         child: ElevatedButton(
                           onPressed: _waypointMode
                               ? () => setState(() {
-                                    final moved = wp.copyWith(point: _fromMap(_mapController.camera.center));
+                                    final moved = wp.copyWith(point: _mapController.camera.center);
                                     if (isSaved) {
                                       _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex] = moved;
                                     } else {
@@ -747,7 +748,7 @@ class _MapPageState extends State<MapPage> {
     return PolylineLayer(
       polylines: [
         Polyline(
-          points: simplified.map((t) => _forMap(t.point)).toList(),
+          points: simplified.map((t) => t.point).toList(),
           color: Colors.yellowAccent,
           strokeWidth: 3,
         ),
@@ -836,7 +837,7 @@ class _MapPageState extends State<MapPage> {
       }
       buttons.add(FloatingActionButton.small(
         heroTag: 'addWaypoint',
-          onPressed: () => setState(() => _waypoints.add(Waypoint(_fromMap(_mapController.camera.center)))),
+          onPressed: () => setState(() => _waypoints.add(Waypoint(_mapController.camera.center))),
         backgroundColor: Colors.orange,
         child: const Icon(Icons.add_location),
       ));
@@ -1023,7 +1024,7 @@ class _MapPageState extends State<MapPage> {
     return MarkerLayer(
       markers: [
         Marker(
-          point: _forMap(start.point),
+          point: start.point,
           width: 120,
           height: 44,
           child: Column(
@@ -1044,7 +1045,7 @@ class _MapPageState extends State<MapPage> {
           ),
         ),
         Marker(
-          point: _forMap(end.point),
+          point: end.point,
           width: 120,
           height: 44,
           child: Column(
@@ -1209,7 +1210,7 @@ class _MapPageState extends State<MapPage> {
 
   Widget _buildLoadedTrackPolyline() {
     return PolylineLayer(
-      polylines: buildSegmentPolylines(_loadedTrack!.map((t) => TrackPoint(_forMap(t.point), t.time, t.totalDistance, segment: t.segment)).toList(), loadedSegmentColors),
+      polylines: buildSegmentPolylines(_loadedTrack!, loadedSegmentColors),
     );
   }
 
@@ -1228,7 +1229,7 @@ class _MapPageState extends State<MapPage> {
           prevIdx = i;
           continue;
         }
-        final pt = _forMap(t.point);
+        final pt = t.point;
         if (prevLabelPoint != null && _screenDistance(prevLabelPoint, pt) < 80 && i != pts.length - 1) {
           prevIdx = i;
           continue;
@@ -1433,7 +1434,7 @@ class _MapPageState extends State<MapPage> {
       labels.add(strokeText('$lat  $lng', fill: Colors.white, fontSize: 10));
     }
     if (_waypointMode && _waypoints.isNotEmpty) {
-      final dist = _distanceCalc.as(LengthUnit.Meter, _waypoints.last.point, _fromMap(center));
+      final dist = _distanceCalc.as(LengthUnit.Meter, _waypoints.last.point, center);
       labels.add(strokeText(fmtDistance(dist), fill: Colors.white70, fontSize: 10));
     }
     if (labels.isEmpty) return const SizedBox.shrink();
@@ -1609,7 +1610,7 @@ class _MapPageState extends State<MapPage> {
     return PolylineLayer(
       polylines: [
         Polyline(
-          points: [_forMap(_waypoints.last.point), center],
+          points: [_waypoints.last.point, center],
           color: i.isOdd ? Colors.orange : Colors.deepOrange,
           strokeWidth: 3,
           pattern: StrokePattern.dotted(),
@@ -1635,7 +1636,7 @@ class _MapPageState extends State<MapPage> {
       final color = i == 0 ? Colors.green : Colors.orange;
       final name = wp.name;
       markers.add(Marker(
-        point: _forMap(p),
+        point: p,
         width: 200,
         height: 24,
         child: GestureDetector(
@@ -1750,7 +1751,7 @@ class _MapPageState extends State<MapPage> {
       final lat = toDms(p.latitude, isLat: true);
       final lng = toDms(p.longitude, isLat: false);
       markers.add(Marker(
-        point: _forMap(p),
+        point: p,
         width: 200,
         height: 24,
         child: GestureDetector(
@@ -1849,7 +1850,7 @@ class _MapPageState extends State<MapPage> {
     return MarkerLayer(
       markers: [
         Marker(
-          point: _forMap(_center),
+          point: _center,
           width: 220,
           height: 100,
           child: Stack(
