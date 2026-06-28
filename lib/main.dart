@@ -473,9 +473,15 @@ class _MapPageState extends State<MapPage> {
       final yMax = yMin + (latDeg * n / 180).ceil() + 2;
       for (int x = xMin; x <= xMax; x++) {
         for (int y = yMin; y <= yMax; y++) {
-          tasks.add(_TileCoord(z, x, y));
+          if (!File(_tilePath(z, x, y)).existsSync()) {
+            tasks.add(_TileCoord(z, x, y));
+          }
         }
       }
+    }
+    if (tasks.isEmpty) {
+      if (mounted) setState(() { _downloading = false; _downloadProgress = 0; _downloadTotal = 0; });
+      return;
     }
     _downloadTotal = tasks.length;
     for (int i = 0; i < tasks.length; i++) {
