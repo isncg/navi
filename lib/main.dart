@@ -53,6 +53,7 @@ class _MapPageState extends State<MapPage> {
   Timer? _autoSaveTimer;
   Timer? _safetyTimer;
   String? _autoSavePath;
+  DateTime? _lastBackPress;
   StreamSubscription<Position>? _posSub;
   StreamSubscription<Position>? _locSub;
 
@@ -502,7 +503,25 @@ class _MapPageState extends State<MapPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        final now = DateTime.now();
+        if (_lastBackPress != null &&
+            now.difference(_lastBackPress!) < const Duration(seconds: 3)) {
+          SystemNavigator.pop();
+          return;
+        }
+        _lastBackPress = now;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('再按一次退出'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      },
+      child: Scaffold(
       body: Stack(
         children: [
           if (_located || _failed)
@@ -599,6 +618,7 @@ class _MapPageState extends State<MapPage> {
         ],
       ),
       floatingActionButton: _buildFabs(),
+      ),
     );
   }
 
