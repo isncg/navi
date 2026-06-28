@@ -97,10 +97,17 @@ class _MapPageState extends State<MapPage> {
   @override
   void initState() {
     super.initState();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _log('App started');
     _locate();
     _loadSavedRecordings();
     _checkAutoSaveRecovery();
+    Timer(const Duration(seconds: 20), () {
+      if (mounted && !_located && !_failed) {
+        _log('Location safety timeout: forcing failed');
+        setState(() => _failed = true);
+      }
+    });
   }
 
   @override
@@ -129,7 +136,7 @@ class _MapPageState extends State<MapPage> {
     var perm = await Geolocator.checkPermission();
     _log('Permission status: $perm');
     if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
+      perm = await Geolocator.requestPermission().timeout(const Duration(seconds: 10));
       _log('Permission after request: $perm');
       if (perm == LocationPermission.denied) {
         _log('Permission denied by user');
@@ -149,7 +156,7 @@ class _MapPageState extends State<MapPage> {
       _log('Requesting position...');
       final position = await Geolocator.getCurrentPosition(
         locationSettings: _locationSettings(),
-      );
+      ).timeout(const Duration(seconds: 15));
       _log('Position: ${position.latitude}, ${position.longitude} accuracy=${position.accuracy}m');
       if (!mounted) return;
       setState(() {
@@ -496,11 +503,13 @@ class _MapPageState extends State<MapPage> {
     return Scaffold(
       body: Stack(
         children: [
-          FlutterMap(
+          if (_located || _failed)
+            FlutterMap(
             mapController: _mapController,
             options: MapOptions(
+              backgroundColor: Colors.black87,
               initialCenter: _center,
-              initialZoom: _located ? 18 : 16,
+              initialZoom: _located ? 18 : (_failed ? 2 : 16),
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
@@ -564,12 +573,14 @@ class _MapPageState extends State<MapPage> {
                 _buildSavedWaypointLayer(s),
               ],
             ],
-          ),
+          )
+          else
+            const SizedBox.expand(child: Center(child: CircularProgressIndicator())),
               if (_recording) _buildTimerBar(),
           if (_loadedTrack != null) _buildLoadedTrackBar(),
           if (_waypointMode) _buildWaypointBar(),
           if (_cartographicMode) _buildZoomLabel(),
-          if (!_located) const Center(child: CircularProgressIndicator()),
+
           if (_showLogs) _buildLogPanel(),
           if (_measureMode || _waypointMode) _buildCrosshair(),
           _buildLeftButtons(),
@@ -714,27 +725,18 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget _buildFabs() {
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
-    if (!_located) {
+    if (!_located && !_failed) {
       final children = <Widget>[
         FloatingActionButton.extended(
-          onPressed: _failed ? _locate : null,
-          icon: Icon(_failed ? Icons.refresh : Icons.location_searching),
-          label: Text(_failed ? '重试' : '定位中...'),
-        ),
-        FloatingActionButton.small(
-          heroTag: 'logs',
-          onPressed: () => setState(() => _showLogs = !_showLogs),
-          backgroundColor: _showLogs ? Colors.green : null,
-          child: const Icon(Icons.terminal),
+          onPressed: null,
+          icon: const Icon(Icons.location_searching),
+          label: const Text('定位中...'),
         ),
       ];
-      return isLandscape
-          ? SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(mainAxisSize: MainAxisSize.min, children: _addSpacing(children, isLandscape)),
-            )
-          : Column(mainAxisSize: MainAxisSize.min, children: _addSpacing(children, isLandscape));
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(mainAxisSize: MainAxisSize.min, children: _addSpacing(children, true)),
+      );
     }
 
     final buttons = <Widget>[];
@@ -861,17 +863,14 @@ class _MapPageState extends State<MapPage> {
         child: const Icon(Icons.folder_open),
       ));
     }
-    final spaced = _addSpacing(buttons, isLandscape);
-    return isLandscape
-        ? SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(mainAxisSize: MainAxisSize.min, children: spaced),
-          )
-        : Column(mainAxisSize: MainAxisSize.min, children: spaced);
+    final spaced = _addSpacing(buttons, true);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(mainAxisSize: MainAxisSize.min, children: spaced),
+    );
   }
 
   Widget _buildLeftButtons() {
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     final buttons = <Widget>[
       FloatingActionButton.small(
         heroTag: 'cartographic',
@@ -905,16 +904,14 @@ class _MapPageState extends State<MapPage> {
         child: Icon(_debugSim ? Icons.directions_walk : Icons.satellite_alt),
       ),
     ];
-    final spaced = _addSpacing(buttons, isLandscape);
+    final spaced = _addSpacing(buttons, true);
     return Positioned(
       bottom: 0,
       left: 0,
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: isLandscape
-              ? Row(mainAxisSize: MainAxisSize.min, children: spaced)
-              : Column(mainAxisSize: MainAxisSize.min, children: spaced),
+          child: Row(mainAxisSize: MainAxisSize.min, children: spaced),
         ),
       ),
     );
@@ -1467,18 +1464,22 @@ class _MapPageState extends State<MapPage> {
 
   Widget _buildWaypointLayer() {
     final markers = <Marker>[];
+    double cum = 0;
+    LatLng? prevShown;
     for (int i = 0; i < _waypoints.length; i++) {
       final p = _waypoints[i];
-      final tooClose = (i > 0 && _screenDistance(_waypoints[i - 1], p) < 28) ||
-          (i < _waypoints.length - 1 && _screenDistance(p, _waypoints[i + 1]) < 28);
-      if (tooClose) continue;
+      if (i > 0) cum += _distanceCalc.as(LengthUnit.Meter, _waypoints[i - 1], p);
+      if (prevShown != null && _screenDistance(prevShown, p) < 28 && i != _waypoints.length - 1) {
+        continue;
+      }
+      prevShown = p;
       final lat = toDms(p.latitude, isLat: true);
       final lng = toDms(p.longitude, isLat: false);
       final color = i == 0 ? Colors.green : Colors.orange;
       markers.add(Marker(
         point: p,
         width: 200,
-        height: 72,
+        height: 88,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1501,6 +1502,7 @@ class _MapPageState extends State<MapPage> {
             ),
             strokeText(lat, fill: color, fontSize: 9),
             strokeText(lng, fill: color, fontSize: 9),
+            strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
           ],
         ),
       ));
@@ -1555,16 +1557,20 @@ class _MapPageState extends State<MapPage> {
   Widget _buildSavedWaypointLayer(int si) {
     final pts = _savedWaypoints[si];
     final markers = <Marker>[];
+    double cum = 0;
+    LatLng? prevShown;
     for (int i = 0; i < pts.length; i++) {
-      final tooClose = (i > 0 && _screenDistance(pts[i - 1], pts[i]) < 28) ||
-          (i < pts.length - 1 && _screenDistance(pts[i], pts[i + 1]) < 28);
-      if (tooClose) continue;
+      if (i > 0) cum += _distanceCalc.as(LengthUnit.Meter, pts[i - 1], pts[i]);
+      if (prevShown != null && _screenDistance(prevShown, pts[i]) < 28 && i != pts.length - 1) {
+        continue;
+      }
+      prevShown = pts[i];
       final lat = toDms(pts[i].latitude, isLat: true);
       final lng = toDms(pts[i].longitude, isLat: false);
       markers.add(Marker(
         point: pts[i],
         width: 200,
-        height: 72,
+        height: 88,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1587,6 +1593,7 @@ class _MapPageState extends State<MapPage> {
             ),
             strokeText(lat, fill: Colors.teal, fontSize: 9),
             strokeText(lng, fill: Colors.teal, fontSize: 9),
+            strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
           ],
         ),
       ));
