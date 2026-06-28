@@ -9,10 +9,11 @@ import 'package:flutter_device_compass/flutter_device_compass.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:geolocator/geolocator.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http;
 
 import 'common.dart';
+import 'painters.dart';
+import 'tiles.dart';
+import 'track_io.dart';
 
 void main() {
   FlutterError.onError = (details) {
@@ -55,7 +56,7 @@ class _MapPageState extends State<MapPage> {
   Timer? _timer;
   Timer? _autoSaveTimer;
   Timer? _safetyTimer;
-  String? _autoSavePath;
+  late final TrackStorage _trackStorage;
   DateTime? _lastBackPress;
   bool _showExitTip = false;
   Timer? _exitTipTimer;
@@ -71,7 +72,6 @@ class _MapPageState extends State<MapPage> {
   int _editingSavedIndex = -1;
   final _editController = TextEditingController();
 
-  final _savedRecordings = <SavedRecording>[];
   List<TrackPoint>? _loadedTrack;
   String? _loadedTrackName;
 
@@ -96,12 +96,6 @@ class _MapPageState extends State<MapPage> {
   Directory? _cacheDir;
   int _tileSourceIndex = 0;
 
-  static const _tileSources = [
-    ('高德卫星', 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', ['1', '2', '3', '4']),
-    ('ArcGIS', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', <String>[]),
-    ('ESRI Clarity', 'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', <String>[]),
-  ];
-
   bool _debugSim = false;
   Timer? _simTimer;
   LatLng? _simPos;
@@ -122,11 +116,12 @@ class _MapPageState extends State<MapPage> {
   @override
   void initState() {
     super.initState();
+    _trackStorage = TrackStorage(_distanceCalc, _log, () => mounted);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _log('App started');
     _locate();
-    _loadSavedRecordings();
-    _checkAutoSaveRecovery();
+    _trackStorage.loadSavedRecordings();
+    _trackStorage.checkAutoSaveRecovery();
     _initCacheDir();
     _safetyTimer = Timer(const Duration(seconds: 20), () {
       if (mounted && !_located && !_failed) {
@@ -353,7 +348,7 @@ class _MapPageState extends State<MapPage> {
 
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted || !_recording || _track.length < 2) return;
-      _autoSaveNow();
+      _trackStorage.autoSaveNow(_track);
     });
 
     setState(() => _recording = true);
@@ -369,108 +364,19 @@ class _MapPageState extends State<MapPage> {
     _simTimer?.cancel();
     setState(() => _recording = false);
     _startLocationUpdates();
-    if (_track.length >= 2) _saveRecording();
-    _deleteAutoSave();
-  }
-
-  Future<Directory> _trackDir() async {
-    Directory parent;
-    if (Platform.isAndroid) {
-      final ext = await getExternalStorageDirectory();
-      parent = ext ?? await getApplicationDocumentsDirectory();
-    } else {
-      parent = await getApplicationDocumentsDirectory();
-    }
-    final trackDir = Directory('${parent.path}/navi_tracks');
-    if (!await trackDir.exists()) await trackDir.create(recursive: true);
-    return trackDir;
-  }
-
-  Future<void> _saveRecording() async {
-    final now = DateTime.now();
-    final name = '${now.year}-${_pad(now.month)}-${_pad(now.day)}_'
-        '${_pad(now.hour)}-${_pad(now.minute)}-${_pad(now.second)}';
-    final buf = StringBuffer();
-    buf.writeln('#$name');
-    for (final t in _track) {
-      buf.writeln('${t.point.latitude.toStringAsFixed(6)} '
-          '${t.point.longitude.toStringAsFixed(6)} '
-          '${t.time.millisecondsSinceEpoch} '
-          '${t.segment}');
-    }
-    try {
-      final dir = await _trackDir();
-      final file = File('${dir.path}/$name.track');
-      await file.writeAsString(buf.toString());
-      _log('Track saved: $name (${_track.length} pts)');
-      _loadSavedRecordings();
-    } catch (e) {
-      _log('Save failed', error: e);
-    }
-  }
-
-  Future<void> _autoSaveNow() async {
-    if (_track.length < 2) return;
-    final buf = StringBuffer();
-    buf.writeln('#autosave');
-    for (final t in _track) {
-      buf.writeln('${t.point.latitude.toStringAsFixed(6)} '
-          '${t.point.longitude.toStringAsFixed(6)} '
-          '${t.time.millisecondsSinceEpoch} '
-          '${t.segment}');
-    }
-    try {
-      final dir = await _trackDir();
-      final tmpFile = File('${dir.path}/.autosave.tmp');
-      await tmpFile.writeAsString(buf.toString());
-      _autoSavePath = tmpFile.path;
-    } catch (e) {
-      _log('Auto-save failed', error: e);
-    }
-  }
-
-  Future<void> _deleteAutoSave() async {
-    if (_autoSavePath == null) return;
-    try {
-      final f = File(_autoSavePath!);
-      if (await f.exists()) await f.delete();
-    } catch (_) {}
-    _autoSavePath = null;
+    if (_track.length >= 2) _trackStorage.saveRecording(_track);
+    _trackStorage.deleteAutoSave();
   }
 
   Future<void> _initCacheDir() async {
-    final docDir = await getApplicationDocumentsDirectory();
-    _cacheDir = Directory('${docDir.path}/tiles_$_tileSourceIndex');
-    if (!await _cacheDir!.exists()) await _cacheDir!.create(recursive: true);
+    _cacheDir = await initTileCacheDir(_tileSourceIndex);
   }
 
   Future<void> _switchTileSource(int index) async {
     if (index == _tileSourceIndex) return;
     _cancelDownload();
     setState(() => _tileSourceIndex = index);
-    await _initCacheDir();
-  }
-
-  String _tilePath(int z, int x, int y) => '${_cacheDir!.path}/$z/$x/$y.png';
-
-  Future<bool> _ensureTileCached(int z, int x, int y) async {
-    final file = File(_tilePath(z, x, y));
-    if (await file.exists()) return true;
-    final (_, urlTemplate, subdomains) = _tileSources[_tileSourceIndex];
-    final url = urlTemplate
-        .replaceAll('{z}', '$z')
-        .replaceAll('{x}', '$x')
-        .replaceAll('{y}', '$y')
-        .replaceAll('{s}', subdomains.isNotEmpty ? subdomains[(x + y) % subdomains.length] : '');
-    try {
-      final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
-      if (resp.statusCode == 200) {
-        await file.parent.create(recursive: true);
-        await file.writeAsBytes(resp.bodyBytes);
-        return true;
-      }
-    } catch (_) {}
-    return false;
+    _cacheDir = await initTileCacheDir(index);
   }
 
   Future<void> _startDownload() async {
@@ -478,24 +384,11 @@ class _MapPageState extends State<MapPage> {
     setState(() { _downloading = true; _downloadCancel = false; _downloadProgress = 0; _downloadTotal = 0; });
     final center = _mapController.camera.center;
     final zoom = _mapController.camera.zoom.round();
-    const areaM = 1000.0;
-    final latDeg = areaM / 111320.0;
-    final lngDeg = areaM / (111320.0 * math.cos(center.latitude * math.pi / 180));
-    final tasks = <_TileCoord>[];
-    for (int z = (zoom - 2).clamp(2, 18); z <= (zoom + 2).clamp(2, 18); z++) {
-      final n = 1 << z;
-      final xMin = ((center.longitude + 180) / 360 * n).floor() - 1;
-      final xMax = xMin + (lngDeg * n / 360).ceil() + 2;
-      final yLat = (1 - math.log(math.tan(center.latitude * math.pi / 180) + 1 / math.cos(center.latitude * math.pi / 180)) / math.pi) / 2;
-      final yMin = (yLat * n).floor() - 1;
-      final yMax = yMin + (latDeg * n / 180).ceil() + 2;
-      for (int x = xMin; x <= xMax; x++) {
-        for (int y = yMin; y <= yMax; y++) {
-          if (!File(_tilePath(z, x, y)).existsSync()) {
-            tasks.add(_TileCoord(z, x, y));
-          }
-        }
-      }
+    final (_, urlTemplate, subdomains) = tileSources[_tileSourceIndex];
+    final allTasks = computeTileCoords(center.latitude, center.longitude, zoom, 1000.0);
+    final tasks = <TileCoord>[];
+    for (final t in allTasks) {
+      if (!File(tileCachePath(_cacheDir!, t.z, t.x, t.y)).existsSync()) tasks.add(t);
     }
     if (tasks.isEmpty) {
       _log('下载结束: 0/0 张 (全部已缓存)');
@@ -504,17 +397,17 @@ class _MapPageState extends State<MapPage> {
     }
     _downloadTotal = tasks.length;
     int failed = 0;
-    final retryList = <_TileCoord>[];
+    final retryList = <TileCoord>[];
     for (int i = 0; i < tasks.length; i++) {
       if (_downloadCancel) break;
-      final ok = await _ensureTileCached(tasks[i].z, tasks[i].x, tasks[i].y);
+      final ok = await downloadTile(_cacheDir!, urlTemplate, subdomains, tasks[i].z, tasks[i].x, tasks[i].y);
       if (!ok) { failed++; retryList.add(tasks[i]); }
       if (mounted) setState(() => _downloadProgress = i + 1);
     }
     if (!_downloadCancel && retryList.isNotEmpty) {
       for (final t in retryList) {
         if (_downloadCancel) break;
-        final ok = await _ensureTileCached(t.z, t.x, t.y);
+        final ok = await downloadTile(_cacheDir!, urlTemplate, subdomains, t.z, t.x, t.y);
         if (ok) failed--;
       }
     }
@@ -527,109 +420,18 @@ class _MapPageState extends State<MapPage> {
 
   void _cancelDownload() => setState(() => _downloadCancel = true);
 
-  Future<void> _checkAutoSaveRecovery() async {
-    try {
-      final dir = await _trackDir();
-      final f = File('${dir.path}/.autosave.tmp');
-      if (!await f.exists()) return;
-      final lines = await f.readAsLines();
-      if (lines.length < 3) return;
-      final timestamp = DateTime.now();
-      final name2 = '${timestamp.year}-${_pad(timestamp.month)}-${_pad(timestamp.day)}_'
-          '${_pad(timestamp.hour)}-${_pad(timestamp.minute)}-${_pad(timestamp.second)}_recovered';
-      final dest = File('${dir.path}/$name2.track');
-      await f.copy(dest.path);
-      await f.delete();
-      _log('Recovered unsaved track: $name2 (${lines.length - 1} pts)');
-      _loadSavedRecordings();
-    } catch (e) {
-      _log('Recovery check failed', error: e);
-    }
-  }
-
-  String _pad(int n) => n.toString().padLeft(2, '0');
-
-  Future<void> _loadSavedRecordings() async {
-    try {
-      final dir = await _trackDir();
-      final files = await dir.list().toList();
-      final recordings = <SavedRecording>[];
-      for (final f in files) {
-        if (f is File && f.path.endsWith('.track')) {
-          try {
-            final lines = await f.readAsLines();
-            if (lines.isEmpty) continue;
-            final name = lines.first.startsWith('#')
-                ? lines.first.substring(1)
-                : f.path.split('/').last.replaceAll('.track', '');
-            double totalDist = 0;
-            LatLng? prev;
-            for (int i = 1; i < lines.length; i++) {
-              final parts = lines[i].split(' ');
-              if (parts.length < 2) continue;
-              final point = LatLng(double.parse(parts[0]), double.parse(parts[1]));
-              if (prev != null) {
-                totalDist += _distanceCalc.as(LengthUnit.Meter, prev, point);
-              }
-              prev = point;
-            }
-            recordings.add(SavedRecording(
-              name: name,
-              path: f.path,
-              pointCount: lines.length - 1,
-              totalDistance: totalDist,
-            ));
-          } catch (_) {}
-        }
-      }
-      recordings.sort((a, b) => b.name.compareTo(a.name));
-      if (mounted) setState(() => _savedRecordings.replaceRange(0, _savedRecordings.length, recordings));
-    } catch (_) {}
-  }
-
   Future<void> _loadRecording(SavedRecording rec) async {
-    try {
-      final lines = await File(rec.path).readAsLines();
-      if (lines.isEmpty) return;
-      final points = <TrackPoint>[];
-      double cum = 0;
-      LatLng? prev;
-      for (int i = 1; i < lines.length; i++) {
-        final parts = lines[i].split(' ');
-        if (parts.length < 3) continue;
-        final point = LatLng(double.parse(parts[0]), double.parse(parts[1]));
-        final time = DateTime.fromMillisecondsSinceEpoch(int.parse(parts[2]));
-        final seg = parts.length > 3 ? int.parse(parts[3]) : 0;
-        if (prev != null) {
-          cum += _distanceCalc.as(LengthUnit.Meter, prev, point);
-        }
-        prev = point;
-        points.add(TrackPoint(point, time, cum, segment: seg));
-      }
-      if (mounted) {
-        setState(() {
-          _loadedTrack = points;
-          _loadedTrackName = rec.name;
-        });
-      }
+    final pts = await _trackStorage.loadRecording(rec);
+    if (mounted && pts.isNotEmpty) {
+      setState(() { _loadedTrack = pts; _loadedTrackName = rec.name; });
       _log('Loaded track: ${rec.name}');
-    } catch (e) {
-      _log('Load failed', error: e);
     }
   }
 
   Future<void> _deleteRecording(SavedRecording rec) async {
-    try {
-      await File(rec.path).delete();
-      _loadSavedRecordings();
-      if (_loadedTrackName == rec.name) {
-        setState(() {
-          _loadedTrack = null;
-          _loadedTrackName = null;
-        });
-      }
-    } catch (e) {
-      _log('Delete failed', error: e);
+    await _trackStorage.deleteRecording(rec);
+    if (_loadedTrackName == rec.name) {
+      setState(() { _loadedTrack = null; _loadedTrackName = null; });
     }
   }
 
@@ -1328,7 +1130,7 @@ class _MapPageState extends State<MapPage> {
   }
 
   TileLayer _buildTileLayer() {
-    final (_, urlTemplate, subdomains) = _tileSources[_tileSourceIndex];
+    final (_, urlTemplate, subdomains) = tileSources[_tileSourceIndex];
     return TileLayer(
       urlTemplate: urlTemplate,
       subdomains: subdomains,
@@ -1466,11 +1268,11 @@ class _MapPageState extends State<MapPage> {
                 children: [
                   const Text('保存的轨迹', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const Spacer(),
-                  Text('${_savedRecordings.length} 条'),
+                  Text('${_trackStorage.savedRecordings.length} 条'),
                 ],
               ),
             ),
-            if (_savedRecordings.isEmpty)
+            if (_trackStorage.savedRecordings.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(24),
                 child: Text('暂无保存的轨迹', style: TextStyle(color: Colors.grey)),
@@ -1478,9 +1280,9 @@ class _MapPageState extends State<MapPage> {
             else
               Flexible(
                 child: ListView.builder(
-                  itemCount: _savedRecordings.length,
+                  itemCount: _trackStorage.savedRecordings.length,
                   itemBuilder: (_, i) {
-                    final rec = _savedRecordings[i];
+                    final rec = _trackStorage.savedRecordings[i];
                     final isLoaded = _loadedTrackName == rec.name;
                     return ListTile(
                       leading: Icon(
@@ -1540,9 +1342,9 @@ class _MapPageState extends State<MapPage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (int i = 0; i < _tileSources.length; i++)
+              for (int i = 0; i < tileSources.length; i++)
                 ListTile(
-                  title: Text(_tileSources[i].$1),
+                  title: Text(tileSources[i].$1),
                   leading: Icon(selected == i ? Icons.radio_button_checked : Icons.radio_button_unchecked),
                   onTap: () {
                     setDialogState(() => selected = i);
@@ -1618,7 +1420,7 @@ class _MapPageState extends State<MapPage> {
       child: Center(
         child: CustomPaint(
           size: const Size(40, 40),
-          painter: _CrosshairPainter(color: _measuring ? Colors.yellow : Colors.white),
+          painter: CrosshairPainter(color: _measuring ? Colors.yellow : Colors.white),
         ),
       ),
     );
@@ -2076,7 +1878,7 @@ class _MapPageState extends State<MapPage> {
                     angle: headingRad,
                     child: CustomPaint(
                       size: const Size(12, 16),
-                      painter: _HeadingTrianglePainter(),
+                      painter: HeadingTrianglePainter(),
                     ),
                   ),
                 ),
@@ -2114,59 +1916,3 @@ class _MapPageState extends State<MapPage> {
   }
 }
 
-class _HeadingTrianglePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = Path()
-      ..moveTo(size.width / 2, 0)
-      ..lineTo(0, size.height)
-      ..lineTo(size.width, size.height)
-      ..close();
-    canvas.drawPath(path, Paint()..color = Colors.blueAccent);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _CrosshairPainter extends CustomPainter {
-  final Color color;
-  _CrosshairPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final p = Paint()
-      ..color = color
-      ..strokeWidth = 1.5;
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-    canvas.drawLine(Offset(cx, 4), Offset(cx, size.height - 4), p);
-    canvas.drawLine(Offset(4, cy), Offset(size.width - 4, cy), p);
-    canvas.drawCircle(Offset(cx, cy), 3, p..style = PaintingStyle.stroke);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _TileCoord {
-  final int z, x, y;
-  const _TileCoord(this.z, this.x, this.y);
-}
-
-class CachedTileProvider extends TileProvider {
-  CachedTileProvider(this.cacheDir);
-
-  final Directory cacheDir;
-
-  String _tilePath(int z, int x, int y) => '${cacheDir.path}/$z/$x/$y.png';
-
-  @override
-  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
-    final file = File(_tilePath(coordinates.z, coordinates.x, coordinates.y));
-    if (file.existsSync()) {
-      return FileImage(file);
-    }
-    return NetworkTileProvider().getImage(coordinates, options);
-  }
-}
