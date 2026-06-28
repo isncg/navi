@@ -748,16 +748,18 @@ class _MapPageState extends State<MapPage> {
           child: const Icon(Icons.layers_clear),
         ));
       }
+      if (_waypoints.isNotEmpty) {
+        buttons.add(FloatingActionButton.small(
+          heroTag: 'undoWaypoint',
+          onPressed: () => setState(() => _waypoints.removeLast()),
+          child: const Icon(Icons.undo),
+        ));
+      }
       buttons.add(FloatingActionButton.small(
         heroTag: 'addWaypoint',
         onPressed: () => setState(() => _waypoints.add(_mapController.camera.center)),
         backgroundColor: Colors.orange,
         child: const Icon(Icons.add_location),
-      ));
-      buttons.add(FloatingActionButton.small(
-        heroTag: 'undoWaypoint',
-        onPressed: () => setState(() => _waypoints.removeLast()),
-        child: const Icon(Icons.undo),
       ));
       buttons.add(FloatingActionButton.small(
         heroTag: 'clearWaypoints',
