@@ -1012,7 +1012,7 @@ class _MapPageState extends State<MapPage> {
     final result = <Widget>[];
     for (int i = 0; i < items.length; i++) {
       result.add(items[i]);
-      if (i < items.length - 1) result.add(horizontal ? const SizedBox(width: 12) : const SizedBox(height: 12));
+      if (i < items.length - 1) result.add(horizontal ? const SizedBox(width: 6) : const SizedBox(height: 6));
     }
     return result;
   }
