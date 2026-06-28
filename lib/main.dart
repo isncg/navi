@@ -560,9 +560,9 @@ class _MapPageState extends State<MapPage> {
                 if (_loadedTrack!.isNotEmpty) _buildLoadedTrackEndpoints(),
               ],
               if (_waypoints.length >= 2) _buildWaypointLines(),
+              if (_waypointMode && _waypoints.isNotEmpty) _buildWaypointPreview(),
               if (_waypoints.length >= 2) MarkerLayer(markers: _buildWaypointLabels()),
               if (_waypoints.isNotEmpty) _buildWaypointLayer(),
-              if (_waypointMode && _waypoints.isNotEmpty) _buildWaypointPreview(),
               if (_measurements.isNotEmpty) _buildMeasurementPolyline(),
               if (_measurements.isNotEmpty) MarkerLayer(markers: _buildMeasurementLabels()),
               if (_measuring && _measureStart != null && _measureStart != _mapController.camera.center) ...[
@@ -584,7 +584,18 @@ class _MapPageState extends State<MapPage> {
           if (_cartographicMode) _buildZoomLabel(),
 
           if (_showLogs) _buildLogPanel(),
-          if (_measureMode || _waypointMode) _buildCrosshair(),
+          if (_measureMode || _waypointMode)
+            Stack(
+              children: [
+                _buildCrosshair(),
+                Positioned(
+                  top: MediaQuery.of(context).size.height / 2 + 24,
+                  left: 0,
+                  right: 0,
+                  child: _buildCrosshairLabels(),
+                ),
+              ],
+            ),
           _buildLeftButtons(),
         ],
       ),
@@ -762,11 +773,6 @@ class _MapPageState extends State<MapPage> {
         child: const Icon(Icons.add_location),
       ));
       buttons.add(FloatingActionButton.small(
-        heroTag: 'clearWaypoints',
-        onPressed: () => setState(() => _waypoints.clear()),
-        child: const Icon(Icons.delete_outline),
-      ));
-      buttons.add(FloatingActionButton.small(
         heroTag: 'saveWaypoints',
         onPressed: _waypoints.length >= 2
             ? () => setState(() {
@@ -785,7 +791,7 @@ class _MapPageState extends State<MapPage> {
             if (!_waypointMode) _waypoints.clear();
           });
         },
-        backgroundColor: _waypointMode ? Colors.grey.shade700 : null,
+        backgroundColor: _waypointMode ? Colors.red : null,
         child: Icon(_waypointMode ? Icons.close : Icons.route),
       ));
     } else if (_measureMode) {
@@ -821,7 +827,7 @@ class _MapPageState extends State<MapPage> {
           _measuring = false;
           _measureStart = null;
         }),
-        backgroundColor: _measureMode ? Colors.grey.shade700 : null,
+        backgroundColor: _measureMode ? Colors.red : null,
         child: Icon(_measureMode ? Icons.close : Icons.straighten),
       ));
     } else {
@@ -1262,6 +1268,24 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  Widget _buildCrosshairLabels() {
+    final center = _mapController.camera.center;
+    final lat = toDms(center.latitude, isLat: true, decimals: 2);
+    final lng = toDms(center.longitude, isLat: false, decimals: 2);
+    final labels = <Widget>[
+      strokeText('$lat  $lng', fill: Colors.white, fontSize: 10),
+    ];
+    if (_waypointMode && _waypoints.isNotEmpty) {
+      final dist = _distanceCalc.as(LengthUnit.Meter, _waypoints.last, center);
+      labels.add(strokeText(fmtDistance(dist), fill: Colors.white70, fontSize: 10));
+    }
+    return IgnorePointer(
+      child: Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: labels),
+      ),
+    );
+  }
+
   void _eraseMeasurement(LatLng tap) {
     double bestDist = double.infinity;
     int bestIdx = -1;
@@ -1477,11 +1501,11 @@ class _MapPageState extends State<MapPage> {
       markers.add(Marker(
         point: p,
         width: 200,
-        height: 88,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        height: 24,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.topCenter,
           children: [
-            const SizedBox(height: 24),
             Container(
               decoration: BoxDecoration(
                 color: color,
@@ -1498,9 +1522,19 @@ class _MapPageState extends State<MapPage> {
                 ),
               ),
             ),
-            strokeText(lat, fill: color, fontSize: 9),
-            strokeText(lng, fill: color, fontSize: 9),
-            strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
+            Positioned(
+              top: 28,
+              left: 0,
+              right: 0,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  strokeText(lat, fill: color, fontSize: 9),
+                  strokeText(lng, fill: color, fontSize: 9),
+                  strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
+                ],
+              ),
+            ),
           ],
         ),
       ));
@@ -1568,11 +1602,11 @@ class _MapPageState extends State<MapPage> {
       markers.add(Marker(
         point: pts[i],
         width: 200,
-        height: 88,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        height: 24,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.topCenter,
           children: [
-            const SizedBox(height: 24),
             Container(
               decoration: BoxDecoration(
                 color: Colors.teal,
@@ -1589,9 +1623,19 @@ class _MapPageState extends State<MapPage> {
                 ),
               ),
             ),
-            strokeText(lat, fill: Colors.teal, fontSize: 9),
-            strokeText(lng, fill: Colors.teal, fontSize: 9),
-            strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
+            Positioned(
+              top: 28,
+              left: 0,
+              right: 0,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  strokeText(lat, fill: Colors.teal, fontSize: 9),
+                  strokeText(lng, fill: Colors.teal, fontSize: 9),
+                  strokeText(fmtDistance(cum), fill: Colors.white70, fontSize: 9),
+                ],
+              ),
+            ),
           ],
         ),
       ));

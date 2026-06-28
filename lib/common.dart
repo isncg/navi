@@ -61,13 +61,13 @@ String fmtDistance(double m) {
   return '${(m / 1000).toStringAsFixed(2)} km';
 }
 
-String toDms(double deg, {required bool isLat}) {
+String toDms(double deg, {required bool isLat, int decimals = 1}) {
   final dir = isLat ? (deg >= 0 ? 'N' : 'S') : (deg >= 0 ? 'E' : 'W');
   final d = deg.abs();
   final degrees = d.truncate();
   final minutes = ((d - degrees) * 60).truncate();
   final seconds = ((d - degrees) * 60 - minutes) * 60;
-  return '$degrees°${minutes.toString().padLeft(2, '0')}\'${seconds.toStringAsFixed(1).padLeft(4, '0')}"$dir';
+  return '$degrees°${minutes.toString().padLeft(2, '0')}\'${seconds.toStringAsFixed(decimals).padLeft(3 + decimals, '0')}"$dir';
 }
 
 String bearingToCardinal(double degrees) {
