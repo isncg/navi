@@ -101,7 +101,7 @@ class _MapPageState extends State<MapPage> {
   @override
   void initState() {
     super.initState();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _log('App started');
     _locate();
     _loadSavedRecordings();
