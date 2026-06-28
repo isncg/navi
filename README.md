@@ -12,9 +12,18 @@ Flutter 3.x / flutter_map / geolocator / flutter_device_compass / latlong2
 
 ```bash
 flutter pub get
+flutter run
+```
+
+## 开发流程
+
+```bash
+# 提交前本地执行
 flutter analyze
 flutter test
-flutter run
+
+# CI 仅做构建（APK + Windows），不执行 analyze/test
+git push
 ```
 
 ## 项目结构
