@@ -94,7 +94,6 @@ class _MapPageState extends State<MapPage> {
   int _downloadTotal = 0;
   bool _downloadCancel = false;
   Directory? _cacheDir;
-  CachedTileProvider? _tileProvider;
   int _tileSourceIndex = 0;
 
   bool _debugSim = false;
@@ -371,7 +370,6 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _initCacheDir() async {
     _cacheDir = await initTileCacheDir(_tileSourceIndex);
-    _tileProvider = CachedTileProvider(_cacheDir!);
   }
 
   Future<void> _switchTileSource(int index) async {
@@ -379,7 +377,6 @@ class _MapPageState extends State<MapPage> {
     _cancelDownload();
     setState(() => _tileSourceIndex = index);
     _cacheDir = await initTileCacheDir(index);
-    _tileProvider = CachedTileProvider(_cacheDir!);
   }
 
   Future<void> _startDownload() async {
@@ -479,8 +476,7 @@ class _MapPageState extends State<MapPage> {
                     }
                   : null,
               onMapEvent: (ev) {
-                if (ev is MapEventMove ||
-                    ev is MapEventMoveEnd ||
+                if (ev is MapEventMoveEnd ||
                     ev is MapEventFlingAnimationEnd ||
                     ev is MapEventScrollWheelZoom) {
                   setState(() => _cameraVersion++);
@@ -1137,7 +1133,6 @@ class _MapPageState extends State<MapPage> {
     return TileLayer(
       urlTemplate: urlTemplate,
       subdomains: subdomains,
-      tileProvider: _tileProvider ?? NetworkTileProvider(),
       evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
     );
   }
