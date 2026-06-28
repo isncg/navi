@@ -1666,7 +1666,7 @@ class _MapPageState extends State<MapPage> {
                   top: -16,
                   left: 0,
                   right: 0,
-                  child: strokeText(name, fill: color, fontSize: 10),
+                  child: strokeText(name, fill: Colors.white, fontSize: 12),
                 ),
               Container(
                 decoration: BoxDecoration(
@@ -1784,7 +1784,7 @@ class _MapPageState extends State<MapPage> {
                 top: -16,
                 left: 0,
                 right: 0,
-                child: strokeText(wp.name, fill: Colors.teal, fontSize: 10),
+                child: strokeText(wp.name, fill: Colors.white, fontSize: 12),
               ),
             Container(
               decoration: BoxDecoration(
