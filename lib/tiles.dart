@@ -15,6 +15,7 @@ class CachedTileProvider extends TileProvider {
   CachedTileProvider(this.cacheDir);
 
   final Directory cacheDir;
+  NetworkTileProvider? _network;
 
   String _tilePath(int z, int x, int y) => '${cacheDir.path}/$z/$x/$y.png';
 
@@ -24,7 +25,8 @@ class CachedTileProvider extends TileProvider {
     if (file.existsSync()) {
       return FileImage(file);
     }
-    return NetworkTileProvider().getImage(coordinates, options);
+    _network ??= NetworkTileProvider();
+    return _network!.getImage(coordinates, options);
   }
 }
 
