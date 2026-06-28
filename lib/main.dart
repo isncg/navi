@@ -578,9 +578,8 @@ class _MapPageState extends State<MapPage> {
           )
           else
             const SizedBox.expand(child: Center(child: CircularProgressIndicator())),
-              if (_recording) _buildTimerBar(),
+              if (_recording || _waypointMode) _buildBottomBar(),
           if (_loadedTrack != null) _buildLoadedTrackBar(),
-          if (_waypointMode) _buildWaypointBar(),
           if (_cartographicMode) _buildZoomLabel(),
 
           if (_showLogs) _buildLogPanel(),
@@ -628,50 +627,49 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
-  Widget _buildTimerBar() {
-    final dist = _track.isNotEmpty ? _track.last.totalDistance : 0.0;
+  Widget _buildBottomBar() {
+    final parts = <Widget>[];
+    if (_recording) {
+      final dist = _track.isNotEmpty ? _track.last.totalDistance : 0.0;
+      parts.add(Container(
+        width: 10,
+        height: 10,
+        decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+      ));
+      parts.add(const SizedBox(width: 8));
+      parts.add(Text(
+        '${fmtDuration(_elapsedSeconds)}  ${fmtDistance(dist)}',
+        style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'monospace'),
+      ));
+    }
+    if (_recording && _waypointMode) {
+      parts.add(const SizedBox(width: 24));
+      parts.add(Container(width: 1, height: 16, color: Colors.white24));
+      parts.add(const SizedBox(width: 24));
+    }
+    if (_waypointMode) {
+      final totalDist = _waypointTotalDistance();
+      parts.add(Text(
+        '${_waypoints.length}点  ${fmtDistance(totalDist)}',
+        style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'monospace'),
+      ));
+    }
     return Positioned(
-      top: 0,
+      bottom: 12,
       left: 0,
       right: 0,
-      child: SafeArea(
-        child: Container(
-          margin: const EdgeInsets.all(12),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.black87,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(
-                  color: Colors.red,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                fmtDuration(_elapsedSeconds),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace',
-                ),
-              ),
-              const Spacer(),
-              Text(
-                fmtDistance(dist),
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 14,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
+      child: IgnorePointer(
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: parts,
+            ),
           ),
         ),
       ),
@@ -1409,30 +1407,6 @@ class _MapPageState extends State<MapPage> {
         ),
       ),
     ];
-  }
-
-  Widget _buildWaypointBar() {
-    final totalDist = _waypointTotalDistance();
-    return Positioned(
-      bottom: 12,
-      left: 0,
-      right: 0,
-      child: IgnorePointer(
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '${_waypoints.length}点  ${fmtDistance(totalDist)}',
-              style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'monospace'),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   double _waypointTotalDistance() {
