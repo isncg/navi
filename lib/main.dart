@@ -727,6 +727,7 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget _buildFabs() {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     if (!_located && !_failed) {
       final children = <Widget>[
         FloatingActionButton.extended(
@@ -735,10 +736,12 @@ class _MapPageState extends State<MapPage> {
           label: const Text('定位中...'),
         ),
       ];
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(mainAxisSize: MainAxisSize.min, children: _addSpacing(children, true)),
-      );
+      return isLandscape
+          ? SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(mainAxisSize: MainAxisSize.min, children: _addSpacing(children, true)),
+            )
+          : Column(mainAxisSize: MainAxisSize.min, children: _addSpacing(children, false));
     }
 
     final buttons = <Widget>[];
@@ -865,14 +868,17 @@ class _MapPageState extends State<MapPage> {
         child: const Icon(Icons.folder_open),
       ));
     }
-    final spaced = _addSpacing(buttons, true);
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(mainAxisSize: MainAxisSize.min, children: spaced),
-    );
+    final spaced = _addSpacing(buttons, isLandscape);
+    return isLandscape
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(mainAxisSize: MainAxisSize.min, children: spaced),
+          )
+        : Column(mainAxisSize: MainAxisSize.min, children: spaced);
   }
 
   Widget _buildLeftButtons() {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     final buttons = <Widget>[
       FloatingActionButton.small(
         heroTag: 'cartographic',
@@ -906,14 +912,16 @@ class _MapPageState extends State<MapPage> {
         child: Icon(_debugSim ? Icons.directions_walk : Icons.satellite_alt),
       ),
     ];
-    final spaced = _addSpacing(buttons, true);
+    final spaced = _addSpacing(buttons, isLandscape);
     return Positioned(
       bottom: 0,
       left: 0,
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Row(mainAxisSize: MainAxisSize.min, children: spaced),
+          child: isLandscape
+              ? Row(mainAxisSize: MainAxisSize.min, children: spaced)
+              : Column(mainAxisSize: MainAxisSize.min, children: spaced),
         ),
       ),
     );
