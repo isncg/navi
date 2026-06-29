@@ -137,13 +137,13 @@ class _MapPageState extends State<MapPage> {
     _trackStorage = TrackStorage(_distanceCalc, _log, () => mounted);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _log('App started');
-    _locate();
+    _initGps();
     _trackStorage.loadSavedRecordings();
     _trackStorage.checkAutoSaveRecovery();
     _initCacheDir();
-    _safetyTimer = Timer(const Duration(seconds: 20), () {
+    _safetyTimer = Timer(const Duration(seconds: 30), () {
       if (mounted && !_located && !_failed) {
-        _log('Location safety timeout: forcing failed');
+        _log('GPS timeout: no position received in 30s');
         setState(() => _failed = true);
       }
     });
@@ -157,15 +157,16 @@ class _MapPageState extends State<MapPage> {
     _simTimer?.cancel();
     _safetyTimer?.cancel();
     _exitTipTimer?.cancel();
+    _reconnectTimer?.cancel();
     _compassSub?.cancel();
     _editController.dispose();
     _logScrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _locate() async {
+  Future<void> _initGps() async {
     setState(() => _failed = false);
-    _log('Locating...');
+    _log('Checking GPS...');
 
     final service = await Geolocator.isLocationServiceEnabled();
     _log('Location service enabled: $service');
@@ -195,44 +196,40 @@ class _MapPageState extends State<MapPage> {
       return;
     }
 
-    try {
-      _log('Requesting position...');
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: _locationSettings(),
-      ).timeout(const Duration(seconds: 30));
-      _log('Position: ${position.latitude}, ${position.longitude} accuracy=${position.accuracy}m');
-      if (!mounted) return;
-      setState(() {
-        _center = LatLng(position.latitude, position.longitude);
-        _located = true;
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _mapController.move(_forMap(_center), 18);
-      });
-      _startLocationUpdates();
-      _startCompass();
-    } catch (e, st) {
-      _log('Position error', error: '$e\n$st');
-      if (!mounted) return;
-      // On timeout, still start location stream — it may succeed later
-      setState(() {
-        _located = true;
-        _failed = false;
-      });
-      _startLocationUpdates();
-      _startCompass();
-    }
+    _startLocationStream();
+    _startCompass();
   }
 
-  void _startLocationUpdates() {
+  /// Persistent GPS stream — runs for entire app lifecycle.
+  /// Recording/non-recording share the same stream, branching in the callback.
+  void _startLocationStream() {
     _posSub?.cancel();
+    final settings = _gpsSettings();
+    _log('Starting GPS stream (${Platform.isAndroid ? "Android FusedLP" : Platform.operatingSystem}, distFilter=2m)...');
     _posSub = Geolocator.getPositionStream(
-      locationSettings: _locationSettings(distanceFilter: 2, streaming: true, foreground: _recording),
+      locationSettings: settings,
     ).listen((pos) {
       if (!mounted) return;
-      _log('GPS: ${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)} acc=${pos.accuracy.toStringAsFixed(1)}m');
+      _reconnectAttempts = 0; // reset backoff on successful data
+      _log('GPS: ${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)} acc=${pos.accuracy.toStringAsFixed(1)}m spd=${pos.speed.toStringAsFixed(1)}m/s');
       final p = LatLng(pos.latitude, pos.longitude);
+
+      // First fix: initialize map
+      if (!_located) {
+        _safetyTimer?.cancel();
+        _log('*** First GPS fix acquired ***');
+        setState(() {
+          _center = p;
+          _located = true;
+          _failed = false;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _mapController.move(_forMap(_center), 18);
+        });
+        return;
+      }
+
       if (_recording) {
         try {
           final last = _track.last;
@@ -241,12 +238,13 @@ class _MapPageState extends State<MapPage> {
           final gap = pos.timestamp.difference(last.time);
           if (gap.inSeconds > 10 || d > 1000) {
             _currentSegment++;
-            _log('GPS gap detected, new segment $_currentSegment');
+            _log('GPS gap detected (${gap.inSeconds}s, ${d.toStringAsFixed(0)}m), new segment $_currentSegment');
           }
           setState(() {
             _track.add(TrackPoint(p, pos.timestamp, total, segment: _currentSegment));
             _center = p;
           });
+          _log('Track: #${_track.length} pts, +${d.toStringAsFixed(1)}m, total=${fmtDistance(total)}');
         } catch (e) {
           _log('Track error', error: e);
         }
@@ -255,7 +253,42 @@ class _MapPageState extends State<MapPage> {
       }
     }, onError: (e) {
       _log('GPS stream error', error: e);
+      _scheduleStreamReconnect();
+    }, onDone: () {
+      _log('GPS stream ended unexpectedly');
+      _scheduleStreamReconnect();
     });
+  }
+
+  /// Auto-reconnect after stream interruption (with backoff).
+  int _reconnectAttempts = 0;
+  Timer? _reconnectTimer;
+
+  void _scheduleStreamReconnect() {
+    if (!mounted) return;
+    _reconnectAttempts++;
+    final delaySec = (_reconnectAttempts * 3).clamp(3, 30);
+    _log('GPS reconnect in ${delaySec}s (attempt $_reconnectAttempts)');
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(Duration(seconds: delaySec), () {
+      if (!mounted) return;
+      _startLocationStream();
+    });
+  }
+
+  /// Unified GPS settings — same for recording and non-recording.
+  LocationSettings _gpsSettings() {
+    if (Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.best,
+        distanceFilter: 2,
+        forceLocationManager: false,
+      );
+    }
+    return const LocationSettings(
+      accuracy: LocationAccuracy.best,
+      distanceFilter: 2,
+    );
   }
 
   void _startCompass() {
@@ -314,29 +347,13 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  LocationSettings _locationSettings({int distanceFilter = 0, bool streaming = false, bool foreground = false}) {
-    if (Platform.isAndroid) {
-      return AndroidSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: distanceFilter,
-        // Single-shot: use LocationManager (reliable for getCurrentPosition)
-        // Streaming: use FusedLocationProvider (required for foreground service)
-        forceLocationManager: !streaming,
-        timeLimit: streaming ? null : const Duration(seconds: 30),
-        foregroundNotificationConfig: foreground
-            ? const ForegroundNotificationConfig(
-                notificationText: 'Navi 正在记录轨迹',
-                notificationTitle: '跟踪记录中',
-                enableWifiLock: true,
-              )
-            : null,
-      );
+  /// Locate button: pan map to latest known GPS position.
+  void _panToCurrentLocation() {
+    if (_located) {
+      final zoom = _mapController.camera.zoom.clamp(16.0, 20.0);
+      _log('Pan to current: ${_center.latitude.toStringAsFixed(6)}, ${_center.longitude.toStringAsFixed(6)} z=$zoom');
+      _mapController.move(_forMap(_center), zoom);
     }
-    return LocationSettings(
-      accuracy: LocationAccuracy.best,
-      distanceFilter: distanceFilter,
-      timeLimit: streaming ? null : const Duration(seconds: 30),
-    );
   }
 
   void _startRecording() {
@@ -347,12 +364,10 @@ class _MapPageState extends State<MapPage> {
     // Immediately record current position as first track point
     _track.add(TrackPoint(_center, DateTime.now(), 0, segment: 0));
     setState(() => _recording = true);
+    _log('Recording started at ${_center.latitude.toStringAsFixed(6)}, ${_center.longitude.toStringAsFixed(6)}');
 
     if (_debugSim) {
       _startSimTimer();
-    } else {
-      // Restart stream with foreground service for recording
-      _startLocationUpdates();
     }
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -372,9 +387,10 @@ class _MapPageState extends State<MapPage> {
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
     _simTimer?.cancel();
+    final pts = _track.length;
+    final dist = _track.isNotEmpty ? _track.last.totalDistance : 0.0;
+    _log('Recording stopped: $pts points, ${fmtDistance(dist)}, ${fmtDuration(_elapsedSeconds)}');
     setState(() => _recording = false);
-    // Restart stream without foreground service
-    _startLocationUpdates();
     if (_track.length >= 2) _trackStorage.saveRecording(_track);
     _trackStorage.deleteAutoSave();
   }
@@ -930,7 +946,7 @@ class _MapPageState extends State<MapPage> {
       ));
       buttons.add(FloatingActionButton.small(
         heroTag: 'locate',
-        onPressed: () { if (!_recording) _locate(); },
+        onPressed: _panToCurrentLocation,
         child: const Icon(Icons.my_location),
       ));
       buttons.add(FloatingActionButton.small(
