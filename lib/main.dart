@@ -534,9 +534,9 @@ class _MapPageState extends State<MapPage> {
               else
                 _buildTileLayer(),
               if (_cartographicMode) _buildGridLayer(),
-              if (_located && !_recording) _buildLocationMarker(),
               if (_track.length >= 2) _buildTrackPolyline(),
               if (_track.length >= 2) MarkerLayer(markers: _buildTrackLabels()),
+              if (_located) _buildLocationMarker(),
               if (_loadedTrack != null && _loadedTrack!.length >= 2) ...[
                 _buildLoadedTrackPolyline(),
                 MarkerLayer(markers: _buildLoadedTrackLabels()),
@@ -816,6 +816,11 @@ class _MapPageState extends State<MapPage> {
       final d = pts[i].totalDistance - pts[prevIdx].totalDistance;
       final td = t.time.difference(pts[prevIdx].time);
       if (i == 0 || (d >= 100 || td.inSeconds >= 30 || i == pts.length - 1)) {
+        // Skip last point label during recording to avoid overlap with location marker
+        if (_recording && i == pts.length - 1) {
+          prevIdx = i;
+          continue;
+        }
         if (prevLabelPoint != null && _screenDistance(prevLabelPoint, t.point) < 80 && i != pts.length - 1) {
           prevIdx = i;
           continue;
