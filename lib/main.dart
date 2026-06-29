@@ -282,7 +282,7 @@ class _MapPageState extends State<MapPage> {
       return AndroidSettings(
         accuracy: LocationAccuracy.best,
         distanceFilter: 2,
-        forceLocationManager: false,
+        forceLocationManager: true,
       );
     }
     return const LocationSettings(
