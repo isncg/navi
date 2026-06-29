@@ -13,6 +13,7 @@ import 'package:geolocator/geolocator.dart';
 
 import 'common.dart';
 import 'coord.dart';
+import 'gps_filter.dart';
 import 'painters.dart';
 import 'tiles.dart';
 import 'track_io.dart';
@@ -104,6 +105,9 @@ class _MapPageState extends State<MapPage> {
   bool _debugSim = false;
   Timer? _simTimer;
   LatLng? _simPos;
+
+  bool _gpsFilterEnabled = false;
+  final _gpsFilter = GpsFilter();
 
   void _log(String msg, {Object? error}) {
     final ts = DateTime.now().toIso8601String().substring(11, 23);
@@ -205,14 +209,28 @@ class _MapPageState extends State<MapPage> {
   void _startLocationStream() {
     _posSub?.cancel();
     final settings = _gpsSettings();
-    _log('Starting GPS stream (${Platform.isAndroid ? "Android FusedLP" : Platform.operatingSystem}, distFilter=2m)...');
+    _log('Starting GPS stream (${Platform.isAndroid ? "Android LocMgr" : Platform.operatingSystem}, distFilter=${_gpsFilterEnabled ? 0 : 2}m, filter=${_gpsFilterEnabled ? "ON" : "OFF"})...');
     _posSub = Geolocator.getPositionStream(
       locationSettings: settings,
     ).listen((pos) {
       if (!mounted) return;
       _reconnectAttempts = 0; // reset backoff on successful data
       _log('GPS: ${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)} acc=${pos.accuracy.toStringAsFixed(1)}m spd=${pos.speed.toStringAsFixed(1)}m/s');
-      final p = LatLng(pos.latitude, pos.longitude);
+
+      // Apply filter if enabled
+      LatLng p;
+      if (_gpsFilterEnabled) {
+        final filtered = _gpsFilter.filter(
+          pos.latitude, pos.longitude, pos.accuracy, pos.timestamp,
+        );
+        if (filtered == null) {
+          _log('GPS filtered out (acc=${pos.accuracy.toStringAsFixed(1)}m)');
+          return;
+        }
+        p = filtered;
+      } else {
+        p = LatLng(pos.latitude, pos.longitude);
+      }
 
       // First fix: initialize map
       if (!_located) {
@@ -278,16 +296,17 @@ class _MapPageState extends State<MapPage> {
 
   /// Unified GPS settings — same for recording and non-recording.
   LocationSettings _gpsSettings() {
+    final distFilter = _gpsFilterEnabled ? 0 : 2;
     if (Platform.isAndroid) {
       return AndroidSettings(
         accuracy: LocationAccuracy.best,
-        distanceFilter: 2,
+        distanceFilter: distFilter,
         forceLocationManager: true,
       );
     }
-    return const LocationSettings(
+    return LocationSettings(
       accuracy: LocationAccuracy.best,
-      distanceFilter: 2,
+      distanceFilter: distFilter,
     );
   }
 
@@ -360,6 +379,7 @@ class _MapPageState extends State<MapPage> {
     _track.clear();
     _elapsedSeconds = 0;
     _currentSegment = 0;
+    if (_gpsFilterEnabled) _gpsFilter.reset();
 
     // Immediately record current position as first track point
     _track.add(TrackPoint(_center, DateTime.now(), 0, segment: 0));
@@ -948,6 +968,17 @@ class _MapPageState extends State<MapPage> {
         onPressed: _toggleRecording,
         backgroundColor: _recording ? Colors.red : null,
         child: Icon(_recording ? Icons.stop : Icons.fiber_manual_record),
+      ));
+      buttons.add(FloatingActionButton.small(
+        heroTag: 'gpsFilter',
+        onPressed: () {
+          setState(() => _gpsFilterEnabled = !_gpsFilterEnabled);
+          _gpsFilter.reset();
+          _startLocationStream();
+          _log('GPS filter ${_gpsFilterEnabled ? "ON (raw+kalman)" : "OFF (distFilter=2)"}');
+        },
+        backgroundColor: _gpsFilterEnabled ? Colors.cyan : null,
+        child: Icon(_gpsFilterEnabled ? Icons.filter_alt : Icons.filter_alt_off),
       ));
       buttons.add(FloatingActionButton.small(
         heroTag: 'locate',
