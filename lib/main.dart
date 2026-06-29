@@ -297,7 +297,7 @@ class _MapPageState extends State<MapPage> {
       return AndroidSettings(
         accuracy: LocationAccuracy.best,
         distanceFilter: distanceFilter,
-        forceLocationManager: true,
+        forceLocationManager: false,
         timeLimit: streaming ? null : const Duration(seconds: 15),
         foregroundNotificationConfig: foreground
             ? const ForegroundNotificationConfig(
@@ -327,6 +327,7 @@ class _MapPageState extends State<MapPage> {
     if (_debugSim) {
       _startSimTimer();
     } else {
+      _log('Starting GPS stream (distanceFilter=2)...');
       _posSub = Geolocator.getPositionStream(
       locationSettings: _locationSettings(distanceFilter: 2, streaming: true, foreground: true),
     ).listen((pos) {
