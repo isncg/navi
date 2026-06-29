@@ -321,23 +321,19 @@ class _MapPageState extends State<MapPage> {
     _elapsedSeconds = 0;
     _currentSegment = 0;
 
+    // Immediately record current position as first track point
+    _track.add(TrackPoint(_center, DateTime.now(), 0, segment: 0));
+
     if (_debugSim) {
-      final now = DateTime.now();
-      _track.add(TrackPoint(_center, now, 0));
       _startSimTimer();
     } else {
       _posSub = Geolocator.getPositionStream(
       locationSettings: _locationSettings(distanceFilter: 2, streaming: true, foreground: true),
     ).listen((pos) {
+      _log('GPS: ${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)} acc=${pos.accuracy.toStringAsFixed(1)}m');
       if (!mounted) return;
       try {
         final p = LatLng(pos.latitude, pos.longitude);
-        if (_track.isEmpty) {
-          setState(() {
-            _track.add(TrackPoint(p, DateTime.now(), 0, segment: _currentSegment));
-          });
-          return;
-        }
         final last = _track.last;
         final d = _distanceCalc.as(LengthUnit.Meter, last.point, p);
         final total = last.totalDistance + d;
@@ -348,6 +344,7 @@ class _MapPageState extends State<MapPage> {
         }
         setState(() {
           _track.add(TrackPoint(p, pos.timestamp, total, segment: _currentSegment));
+          _center = p;
         });
       } catch (e) {
         _log('Stream position error', error: e);
