@@ -62,7 +62,6 @@ class _MapPageState extends State<MapPage> {
   bool _showExitTip = false;
   Timer? _exitTipTimer;
   StreamSubscription<Position>? _posSub;
-  StreamSubscription<Position>? _locSub;
 
   bool _waypointMode = false;
   final _waypoints = <Waypoint>[];
@@ -152,7 +151,6 @@ class _MapPageState extends State<MapPage> {
   @override
   void dispose() {
     _posSub?.cancel();
-    _locSub?.cancel();
     _timer?.cancel();
     _autoSaveTimer?.cancel();
     _simTimer?.cancel();
@@ -221,14 +219,35 @@ class _MapPageState extends State<MapPage> {
   }
 
   void _startLocationUpdates() {
-    _locSub?.cancel();
-    _locSub = Geolocator.getPositionStream(
-      locationSettings: _locationSettings(distanceFilter: 5, streaming: true),
+    _posSub?.cancel();
+    _posSub = Geolocator.getPositionStream(
+      locationSettings: _locationSettings(distanceFilter: 2, streaming: true, foreground: _recording),
     ).listen((pos) {
-      if (!mounted || _recording) return;
-      setState(() {
-        _center = LatLng(pos.latitude, pos.longitude);
-      });
+      if (!mounted) return;
+      _log('GPS: ${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)} acc=${pos.accuracy.toStringAsFixed(1)}m');
+      final p = LatLng(pos.latitude, pos.longitude);
+      if (_recording) {
+        try {
+          final last = _track.last;
+          final d = _distanceCalc.as(LengthUnit.Meter, last.point, p);
+          final total = last.totalDistance + d;
+          final gap = pos.timestamp.difference(last.time);
+          if (gap.inSeconds > 10 || d > 1000) {
+            _currentSegment++;
+            _log('GPS gap detected, new segment $_currentSegment');
+          }
+          setState(() {
+            _track.add(TrackPoint(p, pos.timestamp, total, segment: _currentSegment));
+            _center = p;
+          });
+        } catch (e) {
+          _log('Track error', error: e);
+        }
+      } else {
+        setState(() => _center = p);
+      }
+    }, onError: (e) {
+      _log('GPS stream error', error: e);
     });
   }
 
@@ -243,8 +262,8 @@ class _MapPageState extends State<MapPage> {
   }
 
   void _stopLocationUpdates() {
-    _locSub?.cancel();
-    _locSub = null;
+    _posSub?.cancel();
+    _posSub = null;
   }
 
   void _toggleDebugSim() {
@@ -316,43 +335,19 @@ class _MapPageState extends State<MapPage> {
   }
 
   void _startRecording() {
-    _stopLocationUpdates();
     _track.clear();
     _elapsedSeconds = 0;
     _currentSegment = 0;
 
     // Immediately record current position as first track point
     _track.add(TrackPoint(_center, DateTime.now(), 0, segment: 0));
+    setState(() => _recording = true);
 
     if (_debugSim) {
       _startSimTimer();
     } else {
-      _log('Starting GPS stream (distanceFilter=2)...');
-      _posSub = Geolocator.getPositionStream(
-      locationSettings: _locationSettings(distanceFilter: 2, streaming: true, foreground: true),
-    ).listen((pos) {
-      _log('GPS: ${pos.latitude.toStringAsFixed(6)}, ${pos.longitude.toStringAsFixed(6)} acc=${pos.accuracy.toStringAsFixed(1)}m');
-      if (!mounted) return;
-      try {
-        final p = LatLng(pos.latitude, pos.longitude);
-        final last = _track.last;
-        final d = _distanceCalc.as(LengthUnit.Meter, last.point, p);
-        final total = last.totalDistance + d;
-        final gap = pos.timestamp.difference(last.time);
-        if (gap.inSeconds > 10 || d > 1000) {
-          _currentSegment++;
-          _log('GPS gap detected, new segment $_currentSegment');
-        }
-        setState(() {
-          _track.add(TrackPoint(p, pos.timestamp, total, segment: _currentSegment));
-          _center = p;
-        });
-      } catch (e) {
-        _log('Stream position error', error: e);
-      }
-    }, onError: (e) {
-      _log('Stream error', error: e);
-    });
+      // Restart stream with foreground service for recording
+      _startLocationUpdates();
     }
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -364,19 +359,16 @@ class _MapPageState extends State<MapPage> {
       if (!mounted || !_recording || _track.length < 2) return;
       _trackStorage.autoSaveNow(_track);
     });
-
-    setState(() => _recording = true);
   }
 
   void _stopRecording() {
-    _posSub?.cancel();
-    _posSub = null;
     _timer?.cancel();
     _timer = null;
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
     _simTimer?.cancel();
     setState(() => _recording = false);
+    // Restart stream without foreground service
     _startLocationUpdates();
     if (_track.length >= 2) _trackStorage.saveRecording(_track);
     _trackStorage.deleteAutoSave();
