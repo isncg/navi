@@ -261,10 +261,6 @@ class _MapPageState extends State<MapPage> {
     });
   }
 
-  void _stopLocationUpdates() {
-    _posSub?.cancel();
-    _posSub = null;
-  }
 
   void _toggleDebugSim() {
     setState(() {
