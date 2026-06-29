@@ -80,6 +80,7 @@ class _MapPageState extends State<MapPage> {
 
   final _logs = <String>[];
   bool _showLogs = false;
+  final _logScrollController = ScrollController();
   bool _cartographicMode = false;
   LatLng? _gridOrigin;
   bool _showCoordinates = false;
@@ -99,6 +100,7 @@ class _MapPageState extends State<MapPage> {
 
   bool get _usingGcj02 => tileSources[_tileSourceIndex].$4;
   LatLng _forMap(LatLng p) => _usingGcj02 ? wgs84ToGcj02(p) : p;
+  LatLng _fromMap(LatLng p) => _usingGcj02 ? gcj02ToWgs84(p) : p;
 
   bool _debugSim = false;
   Timer? _simTimer;
@@ -114,6 +116,18 @@ class _MapPageState extends State<MapPage> {
       while (_logs.length > 200) {
         _logs.removeAt(0);
       }
+    });
+    _scrollLogsToBottom();
+  }
+
+  void _scrollLogsToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_showLogs || !_logScrollController.hasClients) return;
+      _logScrollController.animateTo(
+        _logScrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+      );
     });
   }
 
@@ -146,6 +160,7 @@ class _MapPageState extends State<MapPage> {
     _exitTipTimer?.cancel();
     _compassSub?.cancel();
     _editController.dispose();
+    _logScrollController.dispose();
     super.dispose();
   }
 
@@ -192,7 +207,10 @@ class _MapPageState extends State<MapPage> {
         _center = LatLng(position.latitude, position.longitude);
         _located = true;
       });
-      _mapController.move(_center, 18);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _mapController.move(_forMap(_center), 18);
+      });
       _startLocationUpdates();
       _startCompass();
     } catch (e, st) {
@@ -373,8 +391,15 @@ class _MapPageState extends State<MapPage> {
   Future<void> _switchTileSource(int index) async {
     if (index == _tileSourceIndex) return;
     _cancelDownload();
+    // Preserve physical location when switching coordinate systems
+    final physicalCenter = _fromMap(_mapController.camera.center);
+    final zoom = _mapController.camera.zoom;
     setState(() => _tileSourceIndex = index);
     _cacheDir = await initTileCacheDir(index);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _mapController.move(_forMap(physicalCenter), zoom);
+    });
   }
 
   Future<void> _startDownload() async {
@@ -383,8 +408,7 @@ class _MapPageState extends State<MapPage> {
     final center = _mapController.camera.center;
     final zoom = _mapController.camera.zoom.round();
     final (_, urlTemplate, subdomains, _) = tileSources[_tileSourceIndex];
-    final gcjCenter = _forMap(center);
-    final allTasks = computeTileCoords(gcjCenter.latitude, gcjCenter.longitude, zoom, 1000.0);
+    final allTasks = computeTileCoords(center.latitude, center.longitude, zoom, 1000.0);
     final tasks = <TileCoord>[];
     for (final t in allTasks) {
       if (!File(tileCachePath(_cacheDir!, t.z, t.x, t.y)).existsSync()) tasks.add(t);
@@ -464,19 +488,20 @@ class _MapPageState extends State<MapPage> {
             mapController: _mapController,
             options: MapOptions(
               backgroundColor: Colors.black87,
-              initialCenter: _center,
+              initialCenter: _forMap(_center),
               initialZoom: _located ? 18 : (_failed ? 2 : 16),
-              crs: _usingGcj02 ? Gcj02Crs() : Epsg3857(),
+              crs: const Epsg3857(),
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
               onTap: _eraserMode
                   ? (tapPos, latlng) {
-                      _eraseMeasurement(latlng);
+                      _eraseMeasurement(_fromMap(latlng));
                     }
                   : null,
               onMapEvent: (ev) {
                 if (ev is MapEventMoveEnd ||
+                    ev is MapEventMove ||
                     ev is MapEventFlingAnimationEnd ||
                     ev is MapEventScrollWheelZoom) {
                   setState(() => _cameraVersion++);
@@ -511,7 +536,7 @@ class _MapPageState extends State<MapPage> {
               if (_waypoints.isNotEmpty) _buildWaypointLayer(),
               if (_measurements.isNotEmpty) _buildMeasurementPolyline(),
               if (_measurements.isNotEmpty) MarkerLayer(markers: _buildMeasurementLabels()),
-              if (_measuring && _measureStart != null && _measureStart != _mapController.camera.center) ...[
+              if (_measuring && _measureStart != null && _forMap(_measureStart!) != _mapController.camera.center) ...[
                 _buildDrawArrowPolyline(),
                 MarkerLayer(markers: _buildDrawArrowLabels()),
               ],
@@ -643,7 +668,7 @@ class _MapPageState extends State<MapPage> {
                         child: ElevatedButton(
                           onPressed: _waypointMode
                               ? () => setState(() {
-                                    final moved = wp.copyWith(point: _mapController.camera.center);
+                                    final moved = wp.copyWith(point: _fromMap(_mapController.camera.center));
                                     if (isSaved) {
                                       _savedWaypoints[_editingSavedSetIndex][_editingSavedIndex] = moved;
                                     } else {
@@ -748,7 +773,7 @@ class _MapPageState extends State<MapPage> {
     return PolylineLayer(
       polylines: [
         Polyline(
-          points: simplified.map((t) => t.point).toList(),
+          points: simplified.map((t) => _forMap(t.point)).toList(),
           color: Colors.yellowAccent,
           strokeWidth: 3,
         ),
@@ -786,7 +811,7 @@ class _MapPageState extends State<MapPage> {
         final dur = fmtTime(t.time);
         final dist = fmtDistance(t.totalDistance);
         labels.add(Marker(
-          point: t.point,
+          point: _forMap(t.point),
           width: 140,
           height: 16,
           child: strokeText(
@@ -837,7 +862,7 @@ class _MapPageState extends State<MapPage> {
       }
       buttons.add(FloatingActionButton.small(
         heroTag: 'addWaypoint',
-          onPressed: () => setState(() => _waypoints.add(Waypoint(_mapController.camera.center))),
+          onPressed: () => setState(() => _waypoints.add(Waypoint(_fromMap(_mapController.camera.center)))),
         backgroundColor: Colors.orange,
         child: const Icon(Icons.add_location),
       ));
@@ -869,7 +894,7 @@ class _MapPageState extends State<MapPage> {
         heroTag: 'drawArrow',
         onPressed: () => setState(() {
           if (_measuring) {
-            final center = _mapController.camera.center;
+            final center = _fromMap(_mapController.camera.center);
             if (_measureStart != center) {
               _measurements.add(Measurement(_measureStart!, center));
             }
@@ -877,7 +902,7 @@ class _MapPageState extends State<MapPage> {
             _measureStart = null;
           } else {
             _measuring = true;
-            _measureStart = _mapController.camera.center;
+            _measureStart = _fromMap(_mapController.camera.center);
           }
         }),
         backgroundColor: _measuring ? Colors.orange : null,
@@ -1024,7 +1049,7 @@ class _MapPageState extends State<MapPage> {
     return MarkerLayer(
       markers: [
         Marker(
-          point: start.point,
+          point: _forMap(start.point),
           width: 120,
           height: 44,
           child: Column(
@@ -1045,7 +1070,7 @@ class _MapPageState extends State<MapPage> {
           ),
         ),
         Marker(
-          point: end.point,
+          point: _forMap(end.point),
           width: 120,
           height: 44,
           child: Column(
@@ -1084,7 +1109,7 @@ class _MapPageState extends State<MapPage> {
     if (camera.zoom < 8) return PolylineLayer(polylines: []);
     final bounds = camera.visibleBounds;
     final spacingM = _gridSpacingM();
-    final origin = _gridOrigin;
+    final origin = _gridOrigin != null ? _forMap(_gridOrigin!) : null;
     final oLat = origin?.latitude ?? 0.0;
     final oLng = origin?.longitude ?? 0.0;
     final latDeg = spacingM / 111320.0;
@@ -1134,6 +1159,9 @@ class _MapPageState extends State<MapPage> {
       urlTemplate: urlTemplate,
       subdomains: subdomains,
       evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
+      errorTileCallback: (tile, error, _) {
+        _log('Tile error z${tile.coordinates.z} x${tile.coordinates.x} y${tile.coordinates.y}', error: error);
+      },
     );
   }
 
@@ -1210,7 +1238,7 @@ class _MapPageState extends State<MapPage> {
 
   Widget _buildLoadedTrackPolyline() {
     return PolylineLayer(
-      polylines: buildSegmentPolylines(_loadedTrack!, loadedSegmentColors),
+      polylines: buildSegmentPolylines(_loadedTrack!, loadedSegmentColors, mapPoint: _forMap),
     );
   }
 
@@ -1237,7 +1265,7 @@ class _MapPageState extends State<MapPage> {
         final dur = fmtTime(t.time);
         final dist = fmtDistance(t.totalDistance);
         labels.add(Marker(
-          point: pt,
+          point: _forMap(pt),
           width: 120,
           height: 16,
           child: strokeText(
@@ -1393,6 +1421,7 @@ class _MapPageState extends State<MapPage> {
             ),
             Flexible(
               child: ListView.builder(
+                controller: _logScrollController,
                 padding: const EdgeInsets.only(bottom: 80),
                 itemCount: _logs.length,
                 itemBuilder: (_, i) => Padding(
@@ -1426,7 +1455,7 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget _buildCrosshairLabels() {
-    final center = _mapController.camera.center;
+    final center = _fromMap(_mapController.camera.center);
     final labels = <Widget>[];
     if (_showCoordinates) {
       final lat = toDms(center.latitude, isLat: true, decimals: 2);
@@ -1435,7 +1464,23 @@ class _MapPageState extends State<MapPage> {
     }
     if (_waypointMode && _waypoints.isNotEmpty) {
       final dist = _distanceCalc.as(LengthUnit.Meter, _waypoints.last.point, center);
-      labels.add(strokeText(fmtDistance(dist), fill: Colors.white70, fontSize: 10));
+      final bearing = _distanceCalc.bearing(_waypoints.last.point, center);
+      final az = (bearing + 360) % 360;
+      labels.add(strokeText(
+        '${fmtDistance(dist)}  ${az.toStringAsFixed(1)}°${bearingToCardinal(az)}',
+        fill: Colors.white70,
+        fontSize: 10,
+      ));
+    }
+    if (_measuring && _measureStart != null) {
+      final dist = _distanceCalc.as(LengthUnit.Meter, _measureStart!, center);
+      final bearing = _distanceCalc.bearing(_measureStart!, center);
+      final az = (bearing + 360) % 360;
+      labels.add(strokeText(
+        '${fmtDistance(dist)}  ${az.toStringAsFixed(1)}°${bearingToCardinal(az)}',
+        fill: Colors.yellow,
+        fontSize: 10,
+      ));
     }
     if (labels.isEmpty) return const SizedBox.shrink();
     return IgnorePointer(
@@ -1483,12 +1528,12 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget _buildDrawArrowPolyline() {
-    final center = _mapController.camera.center;
+    final center = _fromMap(_mapController.camera.center);
     return PolylineLayer(polylines: _arrowPolylines(_measureStart!, center, Colors.yellow));
   }
 
   List<Marker> _buildDrawArrowLabels() {
-    final center = _mapController.camera.center;
+    final center = _fromMap(_mapController.camera.center);
     return _arrowLabel(_measureStart!, center, Colors.yellow);
   }
 
@@ -1510,7 +1555,7 @@ class _MapPageState extends State<MapPage> {
 
   List<Polyline> _arrowPolylines(LatLng from, LatLng to, Color color) {
     return [
-      Polyline(points: [from, to], color: color, strokeWidth: 2.5),
+      Polyline(points: [_forMap(from), _forMap(to)], color: color, strokeWidth: 2.5),
     ];
   }
 
@@ -1542,7 +1587,7 @@ class _MapPageState extends State<MapPage> {
 
     return [
       Marker(
-        point: to,
+        point: _forMap(to),
         width: 18,
         height: 20,
         child: Transform.rotate(
@@ -1554,7 +1599,7 @@ class _MapPageState extends State<MapPage> {
         ),
       ),
       Marker(
-        point: LatLng(labelLat, labelLng),
+        point: _forMap(LatLng(labelLat, labelLng)),
         width: 120,
         height: 16,
         child: Transform.rotate(
@@ -1581,8 +1626,8 @@ class _MapPageState extends State<MapPage> {
   double _screenDistance(LatLng a, LatLng b) {
     try {
       final camera = _mapController.camera;
-      final p1 = camera.latLngToScreenOffset(a);
-      final p2 = camera.latLngToScreenOffset(b);
+      final p1 = camera.latLngToScreenOffset(_forMap(a));
+      final p2 = camera.latLngToScreenOffset(_forMap(b));
       final dx = p1.dx - p2.dx;
       final dy = p1.dy - p2.dy;
       return math.sqrt(dx * dx + dy * dy);
@@ -1595,7 +1640,7 @@ class _MapPageState extends State<MapPage> {
     final lines = <Polyline>[];
     for (int i = 1; i < _waypoints.length; i++) {
       lines.add(Polyline(
-        points: [_waypoints[i - 1].point, _waypoints[i].point],
+        points: [_forMap(_waypoints[i - 1].point), _forMap(_waypoints[i].point)],
         color: i.isOdd ? Colors.orange : Colors.deepOrange,
         strokeWidth: 3,
         pattern: StrokePattern.dotted(),
@@ -1610,7 +1655,7 @@ class _MapPageState extends State<MapPage> {
     return PolylineLayer(
       polylines: [
         Polyline(
-          points: [_waypoints.last.point, center],
+          points: [_forMap(_waypoints.last.point), center],
           color: i.isOdd ? Colors.orange : Colors.deepOrange,
           strokeWidth: 3,
           pattern: StrokePattern.dotted(),
@@ -1636,7 +1681,7 @@ class _MapPageState extends State<MapPage> {
       final color = i == 0 ? Colors.green : Colors.orange;
       final name = wp.name;
       markers.add(Marker(
-        point: p,
+        point: _forMap(p),
         width: 200,
         height: 24,
         child: GestureDetector(
@@ -1710,7 +1755,7 @@ class _MapPageState extends State<MapPage> {
       );
 
       labels.add(Marker(
-        point: mid,
+        point: _forMap(mid),
         width: 120,
         height: 16,
         child: strokeText(
@@ -1726,7 +1771,7 @@ class _MapPageState extends State<MapPage> {
     final lines = <Polyline>[];
     for (int i = 1; i < pts.length; i++) {
       lines.add(Polyline(
-        points: [pts[i - 1].point, pts[i].point],
+        points: [_forMap(pts[i - 1].point), _forMap(pts[i].point)],
         color: Colors.tealAccent,
         strokeWidth: 3,
         pattern: StrokePattern.dotted(),
@@ -1751,7 +1796,7 @@ class _MapPageState extends State<MapPage> {
       final lat = toDms(p.latitude, isLat: true);
       final lng = toDms(p.longitude, isLat: false);
       markers.add(Marker(
-        point: p,
+        point: _forMap(p),
         width: 200,
         height: 24,
         child: GestureDetector(
@@ -1827,7 +1872,7 @@ class _MapPageState extends State<MapPage> {
         (p1.longitude + p2.longitude) / 2,
       );
       labels.add(Marker(
-        point: mid,
+        point: _forMap(mid),
         width: 120,
         height: 16,
         child: strokeText(
@@ -1850,7 +1895,7 @@ class _MapPageState extends State<MapPage> {
     return MarkerLayer(
       markers: [
         Marker(
-          point: _center,
+          point: _forMap(_center),
           width: 220,
           height: 100,
           child: Stack(

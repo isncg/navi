@@ -173,16 +173,18 @@ const loadedSegmentColors = [
 
 List<Polyline> buildSegmentPolylines(
   List<TrackPoint> points,
-  List<Color> colors,
-) {
+  List<Color> colors, {
+  LatLng Function(LatLng)? mapPoint,
+}) {
   if (points.isEmpty) return [];
+  final convert = mapPoint ?? (LatLng p) => p;
   final lines = <Polyline>[];
   int start = 0;
   int seg = points.first.segment;
   for (int i = 1; i < points.length; i++) {
     if (points[i].segment != seg) {
       lines.add(Polyline(
-        points: points.sublist(start, i).map((t) => t.point).toList(),
+        points: points.sublist(start, i).map((t) => convert(t.point)).toList(),
         color: colors[seg % colors.length],
         strokeWidth: 3,
       ));
@@ -191,7 +193,7 @@ List<Polyline> buildSegmentPolylines(
     }
   }
   lines.add(Polyline(
-    points: points.sublist(start).map((t) => t.point).toList(),
+    points: points.sublist(start).map((t) => convert(t.point)).toList(),
     color: colors[seg % colors.length],
     strokeWidth: 3,
   ));
