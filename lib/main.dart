@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:developer' as dev;
 import 'dart:io';
 import 'dart:math' as math;
@@ -66,7 +67,6 @@ class _MapPageState extends State<MapPage> {
   bool _waypointMode = false;
   final _waypoints = <Waypoint>[];
   final _savedWaypoints = <List<Waypoint>>[];
-  int _cameraVersion = 0;
   int _editingWaypointIndex = -1;
   int _editingSavedSetIndex = -1;
   int _editingSavedIndex = -1;
@@ -77,7 +77,7 @@ class _MapPageState extends State<MapPage> {
 
   final _distanceCalc = const Distance();
 
-  final _logs = <String>[];
+  final _logs = ListQueue<String>();
   bool _showLogs = false;
   final _logScrollController = ScrollController();
   bool _cartographicMode = false;
@@ -110,13 +110,14 @@ class _MapPageState extends State<MapPage> {
     final text = '[$ts] $msg${error != null ? ' $error' : ''}';
     dev.log(msg, name: 'Navi', error: error);
     if (!mounted) return;
-    setState(() {
-      _logs.add(text);
-      while (_logs.length > 200) {
-        _logs.removeAt(0);
-      }
-    });
-    _scrollLogsToBottom();
+    _logs.add(text);
+    while (_logs.length > 200) {
+      _logs.removeFirst();
+    }
+    if (_showLogs) {
+      setState(() {});
+      _scrollLogsToBottom();
+    }
   }
 
   void _scrollLogsToBottom() {
@@ -198,7 +199,7 @@ class _MapPageState extends State<MapPage> {
       _log('Requesting position...');
       final position = await Geolocator.getCurrentPosition(
         locationSettings: _locationSettings(),
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 30));
       _log('Position: ${position.latitude}, ${position.longitude} accuracy=${position.accuracy}m');
       if (!mounted) return;
       setState(() {
@@ -214,7 +215,13 @@ class _MapPageState extends State<MapPage> {
     } catch (e, st) {
       _log('Position error', error: '$e\n$st');
       if (!mounted) return;
-      setState(() => _failed = true);
+      // On timeout, still start location stream — it may succeed later
+      setState(() {
+        _located = true;
+        _failed = false;
+      });
+      _startLocationUpdates();
+      _startCompass();
     }
   }
 
@@ -312,8 +319,10 @@ class _MapPageState extends State<MapPage> {
       return AndroidSettings(
         accuracy: LocationAccuracy.best,
         distanceFilter: distanceFilter,
-        forceLocationManager: false,
-        timeLimit: streaming ? null : const Duration(seconds: 15),
+        // Single-shot: use LocationManager (reliable for getCurrentPosition)
+        // Streaming: use FusedLocationProvider (required for foreground service)
+        forceLocationManager: !streaming,
+        timeLimit: streaming ? null : const Duration(seconds: 30),
         foregroundNotificationConfig: foreground
             ? const ForegroundNotificationConfig(
                 notificationText: 'Navi 正在记录轨迹',
@@ -326,7 +335,7 @@ class _MapPageState extends State<MapPage> {
     return LocationSettings(
       accuracy: LocationAccuracy.best,
       distanceFilter: distanceFilter,
-      timeLimit: streaming ? null : const Duration(seconds: 15),
+      timeLimit: streaming ? null : const Duration(seconds: 30),
     );
   }
 
@@ -487,10 +496,11 @@ class _MapPageState extends State<MapPage> {
                   : null,
               onMapEvent: (ev) {
                 if (ev is MapEventMoveEnd ||
-                    ev is MapEventMove ||
                     ev is MapEventFlingAnimationEnd ||
                     ev is MapEventScrollWheelZoom) {
-                  setState(() => _cameraVersion++);
+                  setState(() {});
+                } else if (ev is MapEventMove && (_measureMode || _waypointMode)) {
+                  setState(() {});
                 }
               },
             ),
@@ -1169,7 +1179,7 @@ class _MapPageState extends State<MapPage> {
               const Icon(Icons.download, color: Colors.white70, size: 16),
               const SizedBox(width: 8),
               Text(
-                '${(_downloadProgress / _downloadTotal * 100).toStringAsFixed(0)}%',
+                '${_downloadTotal > 0 ? (_downloadProgress / _downloadTotal * 100).toStringAsFixed(0) : '0'}%',
                 style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'monospace'),
               ),
               const SizedBox(width: 8),
@@ -1410,17 +1420,20 @@ class _MapPageState extends State<MapPage> {
                 controller: _logScrollController,
                 padding: const EdgeInsets.only(bottom: 80),
                 itemCount: _logs.length,
-                itemBuilder: (_, i) => Padding(
+                itemBuilder: (_, i) {
+                  final entry = _logs.elementAt(i);
+                  return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
                   child: Text(
-                    _logs[i],
+                    entry,
                     style: TextStyle(
-                      color: _logs[i].contains('error') ? Colors.redAccent : Colors.white70,
+                      color: entry.contains('error') ? Colors.redAccent : Colors.white70,
                       fontSize: 11,
                       fontFamily: 'monospace',
                     ),
                   ),
-                ),
+                );
+                },
               ),
             ),
           ],
