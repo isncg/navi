@@ -44,7 +44,7 @@ class MapPage extends StatefulWidget {
   State<MapPage> createState() => _MapPageState();
 }
 
-class _MapPageState extends State<MapPage> {
+class _MapPageState extends State<MapPage> with WidgetsBindingObserver {
   LatLng _center = const LatLng(39.9042, 116.4074);
   bool _located = false;
   bool _failed = false;
@@ -58,6 +58,7 @@ class _MapPageState extends State<MapPage> {
   int _currentSegment = 0;
   Timer? _timer;
   Timer? _autoSaveTimer;
+  DateTime? _recordingStartTime;
   Timer? _safetyTimer;
   late final TrackStorage _trackStorage;
   DateTime? _lastBackPress;
@@ -138,6 +139,7 @@ class _MapPageState extends State<MapPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _trackStorage = TrackStorage(_distanceCalc, _log, () => mounted);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _log('App started');
@@ -155,6 +157,7 @@ class _MapPageState extends State<MapPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _posSub?.cancel();
     _timer?.cancel();
     _autoSaveTimer?.cancel();
@@ -166,6 +169,18 @@ class _MapPageState extends State<MapPage> {
     _editController.dispose();
     _logScrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _recording && _recordingStartTime != null) {
+      // Recalculate elapsed time from actual start time on app resume
+      final now = DateTime.now();
+      setState(() {
+        _elapsedSeconds = now.difference(_recordingStartTime!).inSeconds;
+      });
+      _log('App resumed, elapsed recalculated: ${fmtDuration(_elapsedSeconds)}');
+    }
   }
 
   Future<void> _initGps() async {
@@ -302,6 +317,19 @@ class _MapPageState extends State<MapPage> {
         accuracy: LocationAccuracy.best,
         distanceFilter: distFilter,
         forceLocationManager: true,
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Navi GPS Tracking',
+          notificationText: 'Location tracking is active in background',
+          enableWakeLock: true,
+        ),
+      );
+    }
+    if (Platform.isIOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.best,
+        distanceFilter: distFilter,
+        allowBackgroundLocationUpdates: true,
+        showBackgroundLocationIndicator: true,
       );
     }
     return LocationSettings(
@@ -379,6 +407,7 @@ class _MapPageState extends State<MapPage> {
     _track.clear();
     _elapsedSeconds = 0;
     _currentSegment = 0;
+    _recordingStartTime = DateTime.now();
     if (_gpsFilterEnabled) _gpsFilter.reset();
 
     // Immediately record current position as first track point
@@ -391,8 +420,8 @@ class _MapPageState extends State<MapPage> {
     }
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-      setState(() => _elapsedSeconds++);
+      if (!mounted || _recordingStartTime == null) return;
+      setState(() => _elapsedSeconds = DateTime.now().difference(_recordingStartTime!).inSeconds);
     });
 
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -407,6 +436,7 @@ class _MapPageState extends State<MapPage> {
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
     _simTimer?.cancel();
+    _recordingStartTime = null;
     final pts = _track.length;
     final dist = _track.isNotEmpty ? _track.last.totalDistance : 0.0;
     _log('Recording stopped: $pts points, ${fmtDistance(dist)}, ${fmtDuration(_elapsedSeconds)}');

@@ -59,6 +59,14 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Navi needs your location to display your position on the map and record tracks.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Navi needs background location access to continue recording tracks when the app is in the background.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
