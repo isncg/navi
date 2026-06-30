@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_device_compass/flutter_device_compass.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:geolocator/geolocator.dart';
@@ -143,6 +144,7 @@ class _MapPageState extends State<MapPage> with WidgetsBindingObserver {
     _trackStorage = TrackStorage(_distanceCalc, _log, () => mounted);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _log('App started');
+    _initForegroundTask();
     _initGps();
     _trackStorage.loadSavedRecordings();
     _trackStorage.checkAutoSaveRecovery();
@@ -181,6 +183,24 @@ class _MapPageState extends State<MapPage> with WidgetsBindingObserver {
       });
       _log('App resumed, elapsed recalculated: ${fmtDuration(_elapsedSeconds)}');
     }
+  }
+
+  void _initForegroundTask() {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'navi_tracking',
+        channelName: 'Navi GPS Tracking',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.nothing(),
+        autoRunOnBoot: false,
+        allowWakeLock: true,
+        allowWifiLock: false,
+      ),
+    );
   }
 
   Future<void> _initGps() async {
@@ -317,11 +337,6 @@ class _MapPageState extends State<MapPage> with WidgetsBindingObserver {
         accuracy: LocationAccuracy.best,
         distanceFilter: distFilter,
         forceLocationManager: true,
-        foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'Navi GPS Tracking',
-          notificationText: 'Location tracking is active in background',
-          enableWakeLock: true,
-        ),
       );
     }
     if (Platform.isIOS) {
@@ -410,6 +425,12 @@ class _MapPageState extends State<MapPage> with WidgetsBindingObserver {
     _recordingStartTime = DateTime.now();
     if (_gpsFilterEnabled) _gpsFilter.reset();
 
+    // Start foreground service to keep GPS alive in background
+    FlutterForegroundTask.startService(
+      notificationTitle: 'Navi 轨迹录制中',
+      notificationText: '正在后台记录GPS轨迹',
+    );
+
     // Immediately record current position as first track point
     _track.add(TrackPoint(_center, DateTime.now(), 0, segment: 0));
     setState(() => _recording = true);
@@ -437,6 +458,7 @@ class _MapPageState extends State<MapPage> with WidgetsBindingObserver {
     _autoSaveTimer = null;
     _simTimer?.cancel();
     _recordingStartTime = null;
+    FlutterForegroundTask.stopService();
     final pts = _track.length;
     final dist = _track.isNotEmpty ? _track.last.totalDistance : 0.0;
     _log('Recording stopped: $pts points, ${fmtDistance(dist)}, ${fmtDuration(_elapsedSeconds)}');
