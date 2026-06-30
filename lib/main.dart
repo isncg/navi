@@ -425,6 +425,9 @@ class _MapPageState extends State<MapPage> with WidgetsBindingObserver {
     _recordingStartTime = DateTime.now();
     if (_gpsFilterEnabled) _gpsFilter.reset();
 
+    // Android 13+ requires runtime notification permission
+    FlutterForegroundTask.requestNotificationPermission();
+
     // Start foreground service to keep GPS alive in background
     FlutterForegroundTask.startService(
       notificationTitle: 'Navi 轨迹录制中',
